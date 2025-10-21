@@ -1,103 +1,124 @@
+````markdown
 # 👁️ Saccade
 
-**Give your AI eyes. The sensory organ for your codebase.**
+**Give your AI eyes — the sensory organ for your codebase.**
 
-Saccade is a command-line tool that intelligently scans your repository and creates a hyper-efficient, multi-layered "context pack" for Large Language Models. It enables AIs to understand, debug, and modify complex codebases with a fraction of the token cost of traditional methods.
-
----
-
-*[Planned: Cool animated GIF here showing `saccade` running, the staged output printing, and the final summary table.]*
+Saccade scans your repo and produces a layered, token‑efficient “context pack” that lets LLMs *see* the architecture without slurping every byte. It pairs perfectly with **ApplyDiff** to form an end‑to‑end loop: scan → reason → patch.
 
 ---
 
-### The Problem: LLMs Are Blind
+## Why Saccade?
 
-Large Language Models are incredibly powerful, but they operate with a fundamental handicap: they have no "vision." When you paste an entire codebase into their context window, they are forced to "read" every single word, from the most critical architectural interface to the last byte of a PNG file. This is slow, expensive, and deeply inefficient.
+LLMs are powerful but *context‑hungry*. Pasting raw repos is slow, expensive, and leaky. Saccade mimics human vision:
 
-### The Solution: A Vision-Inspired Workflow
+1. **Peripheral Vision (Stage 0)** – Fast global map
+   - `STRUCTURE.txt` — shallow tree (dirs/files)
+   - `TOKENS.txt` — size heatmap (top 50 by bytes)
+   - `FILE_INDEX.txt` — filtered file list
+2. **Feature Detection (Stage 1)** – Contracts & wiring
+   - `CARGO_TREE_DEDUP.txt` (if Rust)
+   - `API_SURFACE_*` — Rust pub items; TS/JS exports; Python defs/classes; Go exported funcs
+3. **Focused Gaze (Stage 2)** – Compressed code skeleton (optional)
+   - `PACK_STAGE2_COMPRESSED.xml` via Repomix (imports, signatures, types – no bodies)
 
-Saccade mimics the way human vision works. It doesn't just dump data; it performs an intelligent, multi-stage scan to build a rich, layered understanding of your project.
+A simple **Ask‑for‑Files Protocol** teaches the AI to request raw source on demand.
 
-1.  **[SACCADE] The Initial Scan:** The moment you run it, `saccade` performs a quick, low-cost scan to identify the project's key features—what languages are used, where the source code lives, and what the dependency structure looks like.
+---
 
-2.  **[STAGE 0] Peripheral Vision:** It first generates a low-resolution, global overview of your project.
-    *   `STRUCTURE.txt`: A map of your key directories and files.
-    *   `TOKENS.txt`: A "heat map" to show where the code density is highest.
-    *   **Result:** The AI gets a "feel" for the project landscape in seconds, using only a handful of tokens.
+## Quickstart
 
-3.  **[STAGE 1] Feature Detection:** Next, it identifies the "edges and contours" of your code.
-    *   `DEPS.txt`: The dependency graph—the project's structural skeleton.
-    *   `API.txt`: The public API surfaces—the boundaries and contracts of your code.
-    *   **Result:** The AI understands how components connect and interact, without needing to see inside them.
-
-4.  **[STAGE 2] Focused Gaze:** Finally, it uses the power of Tree-sitter to generate a compressed "code skeleton."
-    *   `PACK_STAGE2_COMPRESSED.xml`: An architectural blueprint of your most important code, preserving imports, signatures, and types, while completely removing the token-heavy implementation details.
-    *   **Result:** The AI gets a high-resolution model of your project's architecture, enabling it to reason about logic and write new code that fits perfectly.
-
-The entire process is governed by the **Ask-for-Files Protocol**, which teaches the AI to request full source code on demand, just like a human developer would look up a specific file.
-
-### Features
-
--   **Intelligent Project Detection:** Automatically identifies Rust, JavaScript/TypeScript, Python, Go, and more.
--   **Extreme Token Efficiency:** Creates context packs that are often 10-50x smaller than the raw source.
--   **Multi-Language Support:** The core compression logic is powered by Tree-sitter, supporting dozens of languages out of the box.
--   **Staged Context:** Provides a layered view of your codebase, from a high-level overview to a detailed architectural skeleton.
--   **Zero-Dependency Script:** The core script runs anywhere Bash is present, with no mandatory installs.
-
-### Getting Started
-
-#### Installation
-
-Since `saccade` is a powerful shell script, you can install it by simply cloning this repository and adding the script to your path.
-
-```sh
-# Clone the repository
+```bash
+# Clone or curl the single-file script
 git clone https://github.com/junovhs/saccade.git
-
-# Go into the directory
 cd saccade
+chmod +x saccade
 
-# Optional: Make it runnable from anywhere
-# Add this line to your .bashrc, .zshrc, or equivalent shell profile
-export PATH=$PATH:$(pwd)
+# Run inside any project
+./saccade
+
+# The pack appears in ./ai-pack/
+````
+
+Optional: add to your PATH:
+
+```bash
+export PATH="$PATH:$(pwd)"
 ```
 
-#### First Run
+---
 
-Navigate to any of your project directories and simply run:
+## CLI
 
-```sh
+```text
+saccade [options]
+
+  -o, --out <dir>          Output directory (default: ai-pack)
+      --max-depth <N>      Stage-0 overview depth (default: 3)
+      --git-only           Use Git tracked/unignored files (default in Git repos)
+      --no-git             Force find-based enumeration
+      --include "<re,...>" Only include paths matching any of the regexes (comma-separated, case-insensitive)
+      --exclude "<re,...>" Exclude paths matching any of the regexes
+      --code-only          Restrict Stage-0 lists to code/config/markup
+  -v, --verbose            Verbose logs
+      --version            Show version
+      -h, --help           Help
+```
+
+**Examples**
+
+```bash
+# Minimal
 saccade
+
+# Strict and small
+saccade --git-only --code-only --max-depth 2
+
+# Focus on src/ and tools/, but skip migrations
+saccade --include "^(src|tools)/" --exclude "migrations|fixtures"
 ```
 
-This will create an `ai-pack/` folder in that directory containing the complete, staged context pack for your project.
+---
 
-### The Saccade Pack: What's Inside?
+## What’s in the Pack?
 
-When you run `saccade`, it produces the following artifacts in the `ai-pack/` directory:
+* `OVERVIEW.md` – Fill this once; it orients the AI.
+* `STRUCTURE.txt` – Directories/files (depth‑limited).
+* `TOKENS.txt` – File size heatmap (~token estimate).
+* `FILE_INDEX.txt` – Filtered file list.
+* `LANGUAGES.md` – Extension snapshot.
+* `CARGO_TREE_DEDUP.txt` – Rust deps (if Cargo).
+* `API_SURFACE_RUST.txt` – Public Rust items (`pub`).
+* `API_SURFACE_TS.txt` – TS/JS/TSX/JSX exports & defs.
+* `API_SURFACE_PYTHON.txt` – `def`/`class` signatures.
+* `API_SURFACE_GO.txt` – Exported Go functions.
+* `PACK_STAGE2_COMPRESSED.xml` – (Optional) compressed skeleton via Repomix.
+* `REQUEST_PROTOCOL.md` – YAML ask‑for‑files template.
+* `PACK_MANIFEST.json` – Version, timestamp, counts, artifact sizes.
 
--   `OVERVIEW.md`: A high-level, human-written summary of the project. (You should edit this once!)
--   `STRUCTURE.txt`: The directory tree.
--   `TOKENS.txt`: A "heat map" of the largest files.
--   `DEPS.txt`: The project's dependency graph.
--   `API.txt`: The project's public API surface.
--   `PACK_STAGE2_COMPRESSED.xml`: The compressed architectural skeleton (if Repomix is installed).
--   `REQUEST_PROTOCOL.md`: The instructions that teach the AI how to ask for more files.
+---
 
-### The Saccade + ApplyDiff Ecosystem
+## Safety & Performance
 
-Saccade is designed to work in a perfect loop with its sister tool, **ApplyDiff**.
+* **Respects `.gitignore` by default** (uses `git ls-files` if in a repo).
+* **Prunes** common vendor/build/cache directories (`node_modules`, `dist`, `target`, etc.).
+* **Excludes secrets** like `.env*`, `*.pem`, SSH keys, and **ignores binaries** (`png`, `pdf`, `zip`, media, dbs).
+* **Zero mandatory dependencies**: `git`, `cargo`, and `repomix` are optional accelerators.
 
-1.  **👁️ Saccade (The Eyes):** Scans your codebase and creates the context for the AI.
-2.  **🧠 The AI (The Brain):** Analyzes the context and generates a patch.
-3.  **🖐️ ApplyDiff (The Hands):** Takes the AI-generated patch and safely applies it to your codebase.
+---
 
-Together, they form a complete, end-to-end workflow for AI-assisted development.
+## Saccade + ApplyDiff
 
-### Contributing
+1. **👁️ Saccade** – Generate the pack.
+2. **🧠 Your LLM** – Analyze, propose changes, generate a patch.
+3. **🖐️ ApplyDiff** – Apply the AI’s patch safely.
 
-This is a new project, and contributions are welcome! Please see `CONTRIBUTING.md` for details on how to report bugs, suggest features, or submit code.
+---
 
-### License
+## Contributing
 
-This project is licensed under the MIT License. See the `LICENSE` file for details.
+PRs and issues welcome! See `CONTRIBUTING.md` for guidelines.
+
+## License
+
+MIT. See `LICENSE`.
+
