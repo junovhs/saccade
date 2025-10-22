@@ -131,7 +131,7 @@ impl SaccadePack {
         }
 
         // Print guide
-        guide_gen.print_guide(&self.config.pack_dir, has_deps);
+        guide_gen.print_guide(&self.config.pack_dir, has_deps)?;
 
         Ok(())
     }

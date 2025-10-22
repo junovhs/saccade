@@ -83,8 +83,20 @@ fn main() -> Result<()> {
         config.exclude_patterns = Config::parse_patterns(&patterns)?;
     }
 
+    // Save pack_dir before moving config into pack
+    let pack_dir = config.pack_dir.clone();
+    
     let pack = SaccadePack::new(config);
     pack.generate()?;
+
+    // Output clickable link on Windows for better UX in terminals
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(abs_path) = std::fs::canonicalize(&pack_dir) {
+            let file_url = format!("file:///{}", abs_path.display().to_string().replace("\\", "/"));
+            println!("\nClick: {}", file_url);
+        }
+    }
 
     Ok(())
 }

@@ -23,7 +23,7 @@ impl Stage1Generator {
         output.push_str("========================================\n");
         output.push_str("API SURFACE: RUST\n");
         output.push_str("========================================\n\n");
-        
+
         let rust_api = self.extract_rust_api(rust_crates, file_index)?;
         output.push_str(&rust_api);
 
@@ -31,7 +31,7 @@ impl Stage1Generator {
         output.push_str("\n========================================\n");
         output.push_str("API SURFACE: TYPESCRIPT/JAVASCRIPT\n");
         output.push_str("========================================\n\n");
-        
+
         let ts_api = self.extract_ts_api(frontend_dirs, file_index)?;
         output.push_str(&ts_api);
 
@@ -39,7 +39,7 @@ impl Stage1Generator {
         output.push_str("\n========================================\n");
         output.push_str("API SURFACE: PYTHON\n");
         output.push_str("========================================\n\n");
-        
+
         let py_api = self.extract_python_api(file_index)?;
         output.push_str(&py_api);
 
@@ -47,7 +47,7 @@ impl Stage1Generator {
         output.push_str("\n========================================\n");
         output.push_str("API SURFACE: GO\n");
         output.push_str("========================================\n\n");
-        
+
         let go_api = self.extract_go_api(file_index)?;
         output.push_str(&go_api);
 
@@ -127,7 +127,7 @@ impl Stage1Generator {
                 return Ok(String::new());
             }
         }
-        
+
         let output = Command::new("cargo")
             .args(&["tree", "-e", "normal", "-d"])
             .output();
@@ -156,10 +156,11 @@ impl Stage1Generator {
         let mut output = String::new();
 
         for crate_dir in crates {
-            let crate_str = crate_dir.to_string_lossy();
+            // Normalize paths to handle cross-platform differences (e.g., git ls-files vs. walkdir on Windows)
+            let crate_str = crate_dir.to_string_lossy().replace('\\', "/");
 
             for file_path in file_index {
-                let file_str = file_path.to_string_lossy();
+                let file_str = file_path.to_string_lossy().replace('\\', "/");
 
                 if file_str.starts_with(&*crate_str) && file_str.ends_with(".rs") {
                     if let Ok(content) = fs::read_to_string(file_path) {
@@ -192,10 +193,10 @@ impl Stage1Generator {
         let mut output = String::new();
 
         for frontend_dir in frontend_dirs {
-            let dir_str = frontend_dir.to_string_lossy();
+            let dir_str = frontend_dir.to_string_lossy().replace('\\', "/");
 
             for file_path in file_index {
-                let file_str = file_path.to_string_lossy();
+                let file_str = file_path.to_string_lossy().replace('\\', "/");
 
                 if file_str.starts_with(&*dir_str)
                     && (file_str.ends_with(".js")
