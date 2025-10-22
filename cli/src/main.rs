@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use saccade_core::config::{Config, GitMode};
 use saccade_core::SaccadePack;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -59,7 +59,6 @@ fn main() -> Result<()> {
     config.dry_run = cli.dry_run;
     config.verbose = cli.verbose;
 
-    // Determine Git mode
     if cli.git_only && cli.no_git {
         eprintln!("ERROR: Cannot specify both --git-only and --no-git");
         std::process::exit(1);
@@ -73,19 +72,15 @@ fn main() -> Result<()> {
         GitMode::Auto
     };
 
-    // Parse include patterns
     if let Some(patterns) = cli.include {
         config.include_patterns = Config::parse_patterns(&patterns)?;
     }
-
-    // Parse exclude patterns
     if let Some(patterns) = cli.exclude {
         config.exclude_patterns = Config::parse_patterns(&patterns)?;
     }
 
-    // Save pack_dir before moving config into pack
     let pack_dir = config.pack_dir.clone();
-    
+
     let pack = SaccadePack::new(config);
     pack.generate()?;
 
@@ -93,10 +88,45 @@ fn main() -> Result<()> {
     #[cfg(target_os = "windows")]
     {
         if let Ok(abs_path) = std::fs::canonicalize(&pack_dir) {
-            let file_url = format!("file:///{}", abs_path.display().to_string().replace("\\", "/"));
-            println!("\nClick: {}", file_url);
+            println!("\nClick: {}", file_uri(&abs_path));
         }
     }
 
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn file_uri(path: &Path) -> String {
+    // Strip verbatim prefixes like \\?\ and normalize to forward slashes,
+    // then percent-encode spaces minimally.
+    let mut s = path.display().to_string();
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+        s = rest.to_string();
+    } else if let Some(rest) = s.strip_prefix(r"\\.\") {
+        s = rest.to_string();
+    }
+    s = s.replace('\\', "/").replace(' ', "%20");
+    format!("file:///{}", s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Only compiles/runs on Windows — validates the URI normalization.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn file_uri_strips_verbatim_and_normalizes() {
+        let p = PathBuf::from(r"\\?\C:\Users\Alice\ai pack");
+        let got = file_uri(&p);
+        assert_eq!(got, "file:///C:/Users/Alice/ai%20pack");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn file_uri_handles_regular_paths() {
+        let p = PathBuf::from(r"C:\tmp\ai-pack");
+        let got = file_uri(&p);
+        assert_eq!(got, "file:///C:/tmp/ai-pack");
+    }
 }

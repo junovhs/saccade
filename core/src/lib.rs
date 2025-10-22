@@ -1,9 +1,12 @@
+// In saccade/core/src/lib.rs
+
 pub mod config;
 pub mod enumerate;
 pub mod error;
 pub mod filter;
 pub mod guide;
 pub mod manifest;
+pub mod parser; // <-- ADDED
 pub mod stage0;
 pub mod stage1;
 pub mod stage2;
@@ -18,6 +21,7 @@ use stage0::Stage0Generator;
 use stage1::Stage1Generator;
 use stage2::Stage2Generator;
 use std::fs;
+use std::process::Command;
 
 pub struct SaccadePack {
     config: Config,
@@ -70,67 +74,81 @@ impl SaccadePack {
         // File 1: GUIDE.txt
         let guide_gen = GuideGenerator::new();
         let guide_content = guide_gen.generate_guide()?;
-        fs::write(self.config.pack_dir.join("GUIDE.txt"), guide_content)
-            .map_err(|e| SaccadeError::Io {
+        fs::write(self.config.pack_dir.join("GUIDE.txt"), guide_content).map_err(|e| {
+            SaccadeError::Io {
                 source: e,
                 path: self.config.pack_dir.join("GUIDE.txt"),
-            })?;
+            }
+        })?;
 
         // File 2: PROJECT.txt
-        let in_git = FileEnumerator::new(self.config.clone()).enumerate().is_ok();
+        let in_git = Command::new("git")
+            .args(&["rev-parse", "--is-inside-work-tree"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
         let manifest_gen = ManifestGenerator::new(self.config.clone());
         let project_content = manifest_gen.generate_project_info(
-            raw_count,
-            filtered_count,
+            /* raw_count   */ raw_count,
+            /* filtered    */ filtered_count,
             &self.config.pack_dir,
             in_git,
             &filtered_files,
         )?;
-        fs::write(self.config.pack_dir.join("PROJECT.txt"), project_content)
-            .map_err(|e| SaccadeError::Io {
+        fs::write(self.config.pack_dir.join("PROJECT.txt"), project_content).map_err(|e| {
+            SaccadeError::Io {
                 source: e,
                 path: self.config.pack_dir.join("PROJECT.txt"),
-            })?;
+            }
+        })?;
 
         // File 3: STRUCTURE.txt
         let stage0 = Stage0Generator::new(self.config.clone());
         let structure_content = stage0.generate_combined_structure(&filtered_files)?;
-        fs::write(self.config.pack_dir.join("STRUCTURE.txt"), structure_content)
-            .map_err(|e| SaccadeError::Io {
+        fs::write(self.config.pack_dir.join("STRUCTURE.txt"), structure_content).map_err(|e| {
+            SaccadeError::Io {
                 source: e,
                 path: self.config.pack_dir.join("STRUCTURE.txt"),
-            })?;
+            }
+        })?;
 
         // File 4: APIS.txt
-        let apis_content = stage1.generate_combined_apis(&rust_crates, &frontend_dirs, &filtered_files)?;
-        fs::write(self.config.pack_dir.join("APIS.txt"), apis_content)
-            .map_err(|e| SaccadeError::Io {
+        let apis_content =
+            stage1.generate_combined_apis(&rust_crates, &frontend_dirs, &filtered_files)?;
+        fs::write(self.config.pack_dir.join("APIS.txt"), apis_content).map_err(|e| {
+            SaccadeError::Io {
                 source: e,
                 path: self.config.pack_dir.join("APIS.txt"),
-            })?;
+            }
+        })?;
 
-        // File 5: DEPS.txt (optional - only if has dependencies)
-        let cargo_tree = stage1.generate_cargo_tree()?;
-        let has_deps = !cargo_tree.is_empty();
+        // File 5: DEPS.txt (optional - now multi-ecosystem)
+        let deps_txt = stage1.generate_all_deps()?;
+        let has_deps = !deps_txt.trim().is_empty();
         if has_deps {
-            fs::write(self.config.pack_dir.join("DEPS.txt"), cargo_tree)
-                .map_err(|e| SaccadeError::Io {
+            fs::write(self.config.pack_dir.join("DEPS.txt"), deps_txt).map_err(|e| {
+                SaccadeError::Io {
                     source: e,
                     path: self.config.pack_dir.join("DEPS.txt"),
-                })?;
+                }
+            })?;
         }
 
         // Optional Stage 2 (compressed skeleton)
-        eprintln!("==> [Stage 2] Generating compressed skeleton (if repomix available)...");
+        eprintln!("==> [Stage 2] Generating compressed skeleton with internal parser...");
         let stage2 = Stage2Generator::new();
         let stage2_path = self.config.pack_dir.join("PACK_STAGE2_COMPRESSED.xml");
-        match stage2.generate(&rust_crates, &frontend_dirs, &stage2_path) {
+        // --- MODIFIED ---
+        // Pass the list of filtered files to the new generate function.
+        match stage2.generate(&filtered_files, &stage2_path) {
             Ok(Some(msg)) => eprintln!("    {}", msg),
-            Ok(None) => eprintln!("    repomix not found; skipping compressed skeleton"),
-            Err(e) => eprintln!("    WARN: repomix failed: {}", e),
+            Ok(None) => eprintln!("    Internal parser returned no message."),
+            Err(e) => eprintln!("    WARN: Internal parser failed: {}", e),
         }
+        // --- END MODIFIED ---
 
-        // Print guide
+        // Print guide (summary lines)
         guide_gen.print_guide(&self.config.pack_dir, has_deps)?;
 
         Ok(())
@@ -155,12 +173,11 @@ impl SaccadePack {
 
         eprintln!("  - Found {} Rust crate(s)", rust_crates.len());
         eprintln!("  - Found {} frontend dir(s)", frontend_dirs.len());
-
+        
+        // This check is now less meaningful but we can keep it for consistency.
         let stage2 = Stage2Generator::new();
-        if stage2.has_repomix() {
-            eprintln!("  - Repomix available for Stage 2 compression");
-        } else {
-            eprintln!("  - Repomix NOT available (Stage 2 skipped)");
+        if true { // Our internal parser is always "available"
+            eprintln!("  - Saccade's internal parser is available for Stage 2 compression");
         }
 
         Ok(())

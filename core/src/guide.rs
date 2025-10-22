@@ -59,13 +59,9 @@ impl GuideGenerator {
         eprintln!("\n✅ Success! Generated pack ({})", pack_name);
 
         let absolute_pack_dir = dunce::canonicalize(pack_dir)?;
-
-        // The test specifically checks for this line on Windows.
-        if cfg!(target_os = "windows") {
-            eprintln!("   Click: file:///{}\n", absolute_pack_dir.display());
-        } else {
-            eprintln!("   In: {}\n", absolute_pack_dir.display());
-        }
+        // Single source of truth for the clickable link is the CLI.
+        // Here we print a neutral location line across platforms.
+        eprintln!("   In: {}\n", absolute_pack_dir.display());
 
         eprintln!("   - GUIDE.txt (how to use the pack)");
         eprintln!("   - PROJECT.txt (overview, metadata)");

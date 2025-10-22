@@ -15,3 +15,7 @@ ignore.workspace = true
 walkdir.workspace = true
 chrono.workspace = true
 dunce = "1.0.4"
+tree-sitter = "0.22"
+tree-sitter-typescript = "0.21"
+tree-sitter-rust = "0.21"
+tree-sitter-python = "0.21"

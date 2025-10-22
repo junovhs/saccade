@@ -1,6 +1,9 @@
-use crate::error::{Result, SaccadeError};
+// In saccade/core/src/stage2.rs
+
+use crate::error::Result;
+use crate::parser;
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 pub struct Stage2Generator;
 
@@ -9,67 +12,61 @@ impl Stage2Generator {
         Self
     }
 
-    pub fn has_repomix(&self) -> bool {
-        Command::new("repomix")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-    }
-
+    /// Run the internal parser to generate a compressed skeleton.
+    ///
+    /// This now iterates through all known files, skeletonizes them using our
+    /// internal Tree-sitter parser, and aggregates the results into a single XML file.
     pub fn generate(
         &self,
-        rust_crates: &[PathBuf],
-        frontend_dirs: &[PathBuf],
-        out_path: &Path,
+        files_to_process: &[PathBuf],
+        output_path: &Path,
     ) -> Result<Option<String>> {
-        if !self.has_repomix() {
-            return Ok(None);
+        // Ensure output directory exists
+        if let Some(parent) = output_path.parent() {
+            fs::create_dir_all(parent).ok();
         }
 
-        let mut include_patterns = String::new();
-        for c in rust_crates {
-            let mut s = c.display().to_string();
-            if s.starts_with("./") {
-                s = s.trim_start_matches("./").to_string();
+        let mut final_output = String::new();
+        final_output.push_str("<files>\n");
+
+        let mut files_processed = 0;
+        for file_path in files_to_process {
+            let extension = file_path
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+
+            // Attempt to read and parse the file
+            if let Ok(content) = fs::read_to_string(file_path) {
+                if let Some(skeleton) = parser::skeletonize_file(&content, extension) {
+                    files_processed += 1;
+                    final_output.push_str(&format!("<file path=\"{}\">\n", file_path.display()));
+                    // Basic XML escaping for the content
+                    final_output.push_str(
+                        &skeleton
+                            .replace('&', "&amp;")
+                            .replace('<', "&lt;")
+                            .replace('>', "&gt;"),
+                    );
+                    final_output.push_str("\n</file>\n");
+                }
             }
-            include_patterns.push_str(&format!("{}/**,", s));
-        }
-        for f in frontend_dirs {
-            let mut s = f.display().to_string();
-            if s.starts_with("./") {
-                s = s.trim_start_matches("./").to_string();
-            }
-            include_patterns.push_str(&format!("{}/**,", s));
-        }
-        include_patterns.push_str("*.toml,*.json,*.md");
-        if include_patterns.ends_with(',') {
-            include_patterns.pop();
         }
 
-        let ignore = "**/target/**,**/dist/**,**/build/**,**/node_modules/**,**/gen/**,**/schemas/**,**/tests/**,**/test/**,**/__tests__/**,**/*.lock,AI_*.*,**/.*";
+        final_output.push_str("</files>\n");
 
-        let out = Command::new("repomix")
-            .args([
-                "--compress",
-                "--remove-comments",
-                "--remove-empty-lines",
-                "--include",
-                &include_patterns,
-                "--ignore",
-                ignore,
-                "--style",
-                "xml",
-                "-o",
-                &out_path.display().to_string(),
-            ])
-            .output()?; // io::Error -> SaccadeError (From)
-
-        if !out.status.success() {
-            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-            return Err(SaccadeError::RepomixFailed { stderr });
+        if files_processed > 0 {
+            fs::write(output_path, final_output)?;
+            let msg = format!(
+                "Saccade's internal parser wrote a compressed skeleton for {} files to: {}",
+                files_processed,
+                output_path.display()
+            );
+            Ok(Some(msg))
+        } else {
+            Ok(Some(
+                "No supported files found for Stage 2 skeletonization.".to_string(),
+            ))
         }
-
-        Ok(Some("repomix: packed successfully".into()))
     }
 }

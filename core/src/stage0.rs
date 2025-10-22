@@ -19,23 +19,31 @@ impl Stage0Generator {
         output.push_str("========================================\n");
         output.push_str("DIRECTORY TREE\n");
         output.push_str("========================================\n\n");
-        
+
+        // Collect only directory prefixes (not filenames)
         let mut dirs = BTreeSet::new();
         for path in files {
+            let comps: Vec<_> = path.components().collect();
+            // Up to (max_depth - 1) components, but stop before the final filename
+            let max = self.config.max_depth.saturating_sub(1);
+            let limit = comps.len().saturating_sub(1).min(max);
+            if limit == 0 {
+                continue;
+            }
             let mut current = String::new();
-            for (i, component) in path.components().enumerate() {
-                if i >= self.config.max_depth - 1 {
-                    break;
-                }
+            for i in 0..limit {
                 if !current.is_empty() {
                     current.push('/');
                 }
-                current.push_str(&component.as_os_str().to_string_lossy());
+                current.push_str(&comps[i].as_os_str().to_string_lossy());
                 dirs.insert(current.clone());
             }
         }
 
-        output.push_str(&format!("Directories (depth <= {}):\n\n", self.config.max_depth));
+        output.push_str(&format!(
+            "Directories (depth <= {}):\n\n",
+            self.config.max_depth
+        ));
         for dir in &dirs {
             output.push_str(dir);
             output.push('\n');
