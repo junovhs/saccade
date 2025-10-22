@@ -12,30 +12,34 @@ It mimics human vision:
 • Stage 1 (Features)    → APIS.txt (public surfaces) + DEPS.txt (deps)
 • Stage 2 (Focus)       → PACK_STAGE2_COMPRESSED.xml (signatures only)
 
-This pack is built to be *smaller than your repo* yet *more reliable*
+This pack is designed to be *smaller than your repo* yet *more reliable*
 for planning, diagnosis, and patching.
 
 ========================================
-OPERATIONAL PROTOCOL (FOR THE AI)
+REAL-WORLD USE (DO THIS)
 ========================================
 
-If the human provides no brief, you must drive the session.
+Round 1 — Attach these files:
+  • GUIDE.txt, PROJECT.txt, STRUCTURE.txt, APIS.txt, DEPS.txt (if present)
 
-Round 1 (default; smallest upload)
-  Inputs available: GUIDE.txt, PROJECT.txt, STRUCTURE.txt, APIS.txt, DEPS.txt (if present)
-  Your job:
-    1) Triage: ask one question to classify intent → {bug, new feature, refactor}.
-    2) Read PROJECT.txt; infer entry points and constraints.
-    3) From STRUCTURE.txt + APIS.txt (+ DEPS.txt), propose a minimal plan.
-    4) When you need implementations, send a REQUEST_FILE (format below).
-  Do NOT ask for whole files unless strictly necessary.
+Paste a short brief (copy & edit):
+  Goal: <what you want changed/added/fixed>
+  Evidence: <errors/logs/stack traces; short and relevant>
+  Context: <entry points, recent changes, repro>
+  Constraints: <perf, API compatibility, deadlines>
+  Definition of Done: <tests green, clippy clean, no API break, etc.>
 
-Escalation rule
-  • After your first failed attempt, or if you are uncertain about layout/contracts,
+If you provide nothing, the AI must still begin by triaging intent (bug/feature/refactor),
+proposing a minimal plan, and requesting code slices via REQUEST_FILE when needed.
+
+Escalation rule:
+  • After the first failed attempt OR when layout/contracts are unclear,
     ask for PACK_STAGE2_COMPRESSED.xml (signatures-only skeleton).
   • If still blocked, request the smallest useful code slice via REQUEST_FILE.
 
-REQUEST_FILE (exact format)
+========================================
+REQUEST_FILE — EXACT FORMAT
+========================================
 
 REQUEST_FILE:
   path: relative/path/to/file.ext
@@ -43,36 +47,25 @@ REQUEST_FILE:
     What you will inspect or implement.
   range: lines 80-140        # or: symbol: FunctionName
 
-Guidelines
+Guidelines:
   - Minimize tokens: prefer line ranges over whole files.
   - Use STRUCTURE.txt and APIS.txt to pick targets.
   - Never hallucinate missing code—request it explicitly.
 
 ========================================
-WHAT THE HUMAN CAN SAY (OPTIONAL)
-========================================
-
-Helpful (but not required) on first message:
-  • Goal: what you want changed/added/fixed.
-  • Symptoms: errors/logs/stack traces.
-  • Constraints: perf, API contracts, deadlines.
-
-If you say nothing, the AI will begin with triage and lead the process.
-
-========================================
 FILES IN THIS PACK
 ========================================
 
-1. GUIDE.txt                 — This file (protocol + usage)
+1. GUIDE.txt                 — Protocol + usage (you are here)
 2. PROJECT.txt               — Repo intent, entry points, current task
 3. STRUCTURE.txt             — Tree (depth-limited), file index, size heatmap
 4. APIS.txt                  — Public surfaces (Rust/TS-JS/Python/…)
 5. DEPS.txt (optional)       — Dependency snapshot (e.g., cargo tree)
 6. PACK_STAGE2_COMPRESSED.xml— Signatures-only skeleton (attach only if needed)
 
-Tips
+Tips:
   - Use --code-only, --include/--exclude, and --max-depth to reduce tokens.
-  - Re-run Saccade after changes; packs are fast to refresh.
+  - Re-run Saccade after changes; packs are quick to refresh.
 "#;
 
 pub struct GuideGenerator;
