@@ -11,6 +11,49 @@ impl Stage1Generator {
         Self
     }
 
+    pub fn generate_combined_apis(
+        &self,
+        rust_crates: &[PathBuf],
+        frontend_dirs: &[PathBuf],
+        file_index: &[PathBuf],
+    ) -> Result<String> {
+        let mut output = String::new();
+
+        // Rust API
+        output.push_str("========================================\n");
+        output.push_str("API SURFACE: RUST\n");
+        output.push_str("========================================\n\n");
+        
+        let rust_api = self.extract_rust_api(rust_crates, file_index)?;
+        output.push_str(&rust_api);
+
+        // TypeScript/JavaScript API
+        output.push_str("\n========================================\n");
+        output.push_str("API SURFACE: TYPESCRIPT/JAVASCRIPT\n");
+        output.push_str("========================================\n\n");
+        
+        let ts_api = self.extract_ts_api(frontend_dirs, file_index)?;
+        output.push_str(&ts_api);
+
+        // Python API
+        output.push_str("\n========================================\n");
+        output.push_str("API SURFACE: PYTHON\n");
+        output.push_str("========================================\n\n");
+        
+        let py_api = self.extract_python_api(file_index)?;
+        output.push_str(&py_api);
+
+        // Go API
+        output.push_str("\n========================================\n");
+        output.push_str("API SURFACE: GO\n");
+        output.push_str("========================================\n\n");
+        
+        let go_api = self.extract_go_api(file_index)?;
+        output.push_str(&go_api);
+
+        Ok(output)
+    }
+
     pub fn find_rust_crates(&self) -> Result<Vec<PathBuf>> {
         let mut crates = Vec::new();
 
@@ -23,7 +66,6 @@ impl Stage1Generator {
                 if let Some(parent) = entry.path().parent() {
                     let src_dir = parent.join("src");
                     if src_dir.exists() && src_dir.is_dir() {
-                        // Normalize: strip ./ prefix
                         let normalized = if let Ok(stripped) = src_dir.strip_prefix(".") {
                             stripped.to_path_buf()
                         } else {
@@ -42,7 +84,6 @@ impl Stage1Generator {
         let mut dirs = Vec::new();
         let mut seen = std::collections::HashSet::new();
 
-        // First: find package.json locations
         for entry in walkdir::WalkDir::new(".")
             .follow_links(false)
             .into_iter()
@@ -54,7 +95,6 @@ impl Stage1Generator {
         {
             if entry.file_name() == "package.json" {
                 if let Some(parent) = entry.path().parent() {
-                    // Normalize: strip ./ prefix
                     let normalized = if let Ok(stripped) = parent.strip_prefix(".") {
                         stripped.to_path_buf()
                     } else {
@@ -67,7 +107,6 @@ impl Stage1Generator {
             }
         }
 
-        // Fallback: if no package.json found, check common dirs
         if dirs.is_empty() {
             for name in &["app", "frontend", "web", "client", "ui", "src"] {
                 let path = PathBuf::from(name);
@@ -82,7 +121,6 @@ impl Stage1Generator {
     }
 
     pub fn generate_cargo_tree(&self) -> Result<String> {
-        // Skip cargo tree in test environments (temp directories)
         if let Ok(cwd) = std::env::current_dir() {
             let cwd_str = cwd.to_string_lossy();
             if cwd_str.contains("/tmp/") || cwd_str.contains("\\Temp\\") {
@@ -95,12 +133,18 @@ impl Stage1Generator {
             .output();
 
         match output {
-            Ok(out) if out.status.success() => Ok(String::from_utf8_lossy(&out.stdout).to_string()),
+            Ok(out) if out.status.success() => {
+                let mut result = String::from("========================================\n");
+                result.push_str("RUST DEPENDENCIES (cargo tree -d)\n");
+                result.push_str("========================================\n\n");
+                result.push_str(&String::from_utf8_lossy(&out.stdout));
+                Ok(result)
+            }
             _ => Ok(String::new()),
         }
     }
 
-    pub fn extract_rust_api(&self, crates: &[PathBuf], file_index: &[PathBuf]) -> Result<String> {
+    fn extract_rust_api(&self, crates: &[PathBuf], file_index: &[PathBuf]) -> Result<String> {
         if crates.is_empty() {
             return Ok("(no Rust crates found)\n".to_string());
         }
@@ -136,7 +180,7 @@ impl Stage1Generator {
         Ok(output)
     }
 
-    pub fn extract_ts_api(&self, frontend_dirs: &[PathBuf], file_index: &[PathBuf]) -> Result<String> {
+    fn extract_ts_api(&self, frontend_dirs: &[PathBuf], file_index: &[PathBuf]) -> Result<String> {
         if frontend_dirs.is_empty() {
             return Ok("(no frontend dirs found)\n".to_string());
         }
@@ -180,7 +224,7 @@ impl Stage1Generator {
         Ok(output)
     }
 
-    pub fn extract_python_api(&self, file_index: &[PathBuf]) -> Result<String> {
+    fn extract_python_api(&self, file_index: &[PathBuf]) -> Result<String> {
         let pattern = Regex::new(r"^\s*(def|class)\s+([A-Za-z][A-Za-z0-9_]*)")?;
 
         let mut output = String::new();
@@ -193,7 +237,6 @@ impl Stage1Generator {
                     for (line_num, line) in content.lines().enumerate() {
                         if let Some(caps) = pattern.captures(line) {
                             if let Some(name) = caps.get(2) {
-                                // Exclude names starting with underscore
                                 if !name.as_str().starts_with('_') {
                                     output.push_str(&format!("{}:{}:{}\n", file_str, line_num + 1, line));
                                 }
@@ -211,7 +254,7 @@ impl Stage1Generator {
         Ok(output)
     }
 
-    pub fn extract_go_api(&self, file_index: &[PathBuf]) -> Result<String> {
+    fn extract_go_api(&self, file_index: &[PathBuf]) -> Result<String> {
         let pattern = Regex::new(r"^\s*func\s+([A-Z][A-Za-z0-9_]*)\s*\(")?;
 
         let mut output = String::new();

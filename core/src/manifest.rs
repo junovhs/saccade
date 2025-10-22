@@ -1,10 +1,10 @@
 use crate::config::{Config, GitMode};
 use crate::error::Result;
+use crate::stage0::Stage0Generator;
 use chrono::Utc;
 use serde::Serialize;
-use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Serialize)]
@@ -15,7 +15,6 @@ pub struct Manifest {
     args: ManifestArgs,
     counts: ManifestCounts,
     tools: ManifestTools,
-    artifacts: HashMap<String, u64>,
 }
 
 #[derive(Serialize)]
@@ -51,13 +50,70 @@ impl ManifestGenerator {
         Self { config }
     }
 
-    pub fn generate(
+    pub fn generate_project_info(
         &self,
         raw_count: usize,
         filtered_count: usize,
-        pack_dir: &Path,
+        _pack_dir: &Path,
         in_git: bool,
+        files: &[PathBuf],
     ) -> Result<String> {
+        let mut output = String::new();
+
+        // Section 1: README (if exists)
+        output.push_str("========================================\n");
+        output.push_str("PROJECT OVERVIEW\n");
+        output.push_str("========================================\n\n");
+
+        let readme_found = self.try_include_readme(&mut output)?;
+        
+        if !readme_found {
+            output.push_str("(No README.md found in project root)\n\n");
+            output.push_str("User: Describe your project and current task here.\n\n");
+        }
+
+        // Section 2: Manifest
+        output.push_str("========================================\n");
+        output.push_str("PACK METADATA\n");
+        output.push_str("========================================\n\n");
+
+        let manifest = self.build_manifest(raw_count, filtered_count, in_git)?;
+        let manifest_json = serde_json::to_string_pretty(&manifest)?;
+        output.push_str(&manifest_json);
+        output.push_str("\n\n");
+
+        // Section 3: Language Stats
+        output.push_str("========================================\n");
+        output.push_str("LANGUAGE STATISTICS\n");
+        output.push_str("========================================\n\n");
+
+        let stage0 = Stage0Generator::new(self.config.clone());
+        let languages = stage0.generate_languages(files)?;
+        output.push_str(&languages);
+
+        Ok(output)
+    }
+
+    fn try_include_readme(&self, output: &mut String) -> Result<bool> {
+        for name in &["README.md", "README.txt", "README", "readme.md"] {
+            let readme_path = Path::new(name);
+            if readme_path.exists() {
+                if let Ok(content) = fs::read_to_string(readme_path) {
+                    output.push_str(&content);
+                    output.push_str("\n\n");
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    fn build_manifest(
+        &self,
+        raw_count: usize,
+        filtered_count: usize,
+        in_git: bool,
+    ) -> Result<Manifest> {
         let timestamp_utc = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
         let git_commit = if in_git {
@@ -99,8 +155,6 @@ impl ManifestGenerator {
             .collect::<Vec<_>>()
             .join(",");
 
-        let artifacts = self.collect_artifact_sizes(pack_dir)?;
-
         let has_cargo = Command::new("cargo")
             .arg("--version")
             .output()
@@ -113,7 +167,7 @@ impl ManifestGenerator {
             .map(|o| o.status.success())
             .unwrap_or(false);
 
-        let manifest = Manifest {
+        Ok(Manifest {
             pack_version: env!("CARGO_PKG_VERSION").to_string(),
             timestamp_utc,
             git_commit,
@@ -135,42 +189,6 @@ impl ManifestGenerator {
                 cargo: has_cargo,
                 repomix: has_repomix,
             },
-            artifacts,
-        };
-
-        let json = serde_json::to_string_pretty(&manifest)?;
-        Ok(json)
-    }
-
-    fn collect_artifact_sizes(&self, pack_dir: &Path) -> Result<HashMap<String, u64>> {
-        let artifact_names = vec![
-            "OVERVIEW.md",
-            "STRUCTURE.txt",
-            "TOKENS.txt",
-            "FILE_INDEX.txt",
-            "LANGUAGES.md",
-            "API_SURFACE_RUST.txt",
-            "API_SURFACE_TS.txt",
-            "API_SURFACE_PYTHON.txt",
-            "API_SURFACE_GO.txt",
-            "CARGO_TREE_DEDUP.txt",
-            "PACK_STAGE2_COMPRESSED.xml",
-            "REQUEST_PROTOCOL.md",
-            "PACK_README.md",
-        ];
-
-        let mut sizes = HashMap::new();
-
-        for name in artifact_names {
-            let path = pack_dir.join(name);
-            let size = if path.exists() {
-                fs::metadata(&path).map(|m| m.len()).unwrap_or(0)
-            } else {
-                0
-            };
-            sizes.insert(name.to_string(), size);
-        }
-
-        Ok(sizes)
+        })
     }
 }

@@ -1,3 +1,4 @@
+use crate::error::Result;
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -10,147 +11,125 @@ impl GuideGenerator {
         Self
     }
 
-    pub fn generate_static_files(&self, pack_dir: &Path) -> std::io::Result<()> {
-        fs::write(
-            pack_dir.join("OVERVIEW.md"),
-            r#"# Project Overview (fill this out once)
-- What it does:
-- Primary tech (e.g., Rust backend, Tauri desktop, TS/React UI):
-- Entrypoints / main binaries:
-- Key modules / domains:
-- Current task/question for the AI:
-"#,
-        )?;
+    pub fn generate_guide(&self) -> Result<String> {
+        let mut content = String::new();
 
-        fs::write(
-            pack_dir.join("REQUEST_PROTOCOL.md"),
-            r#"# Ask-for-Files Protocol
-You have a staged view:
-- STRUCTURE.txt (shallow tree), TOKENS.txt (size heat map)
-- Dependency / API surfaces (DEPS, API_SURFACE_*)
-- PACK_STAGE2_COMPRESSED.xml (if present; compressed skeleton)
-If you need raw source, request:
+        content.push_str("========================================\n");
+        content.push_str("SACCADE PACK GUIDE\n");
+        content.push_str("========================================\n\n");
 
-REQUEST_FILE:
-  path: relative/path
-  reason: >-
-    What you will inspect or implement.
-  range: lines 80-140        # or: symbol: Foo::bar
+        content.push_str("This is a Saccade context pack—a token-efficient representation\n");
+        content.push_str("of a codebase designed for LLMs. It mimics human vision:\n\n");
 
-Minimize requests. Produce complete, compilable implementations that match project conventions.
-Never hallucinate missing code—request it.
-"#,
-        )?;
+        content.push_str("Stage 0 (Peripheral): Structure overview (what exists, where, how big)\n");
+        content.push_str("Stage 1 (Features):   API surfaces (contracts, exports, signatures)\n");
+        content.push_str("Stage 2 (Focus):      On-demand source via REQUEST_FILE protocol\n\n");
 
-        fs::write(
-            pack_dir.join("PACK_README.md"),
-            r#"# AI Pack — How to Use
+        content.push_str("========================================\n");
+        content.push_str("FILES IN THIS PACK\n");
+        content.push_str("========================================\n\n");
 
-Round 1 (tiny upload):
-- OVERVIEW.md (fill it out)
-- STRUCTURE.txt
-- TOKENS.txt
-- CARGO_TREE_DEDUP.txt (if Rust)
-- API_SURFACE_* (language surfaces)
-- REQUEST_PROTOCOL.md
+        content.push_str("1. GUIDE.txt (this file)     - How to use the pack\n");
+        content.push_str("2. PROJECT.txt               - Overview, metadata, languages\n");
+        content.push_str("3. STRUCTURE.txt             - Directory tree, file list, token heatmap\n");
+        content.push_str("4. APIS.txt                  - API surfaces (Rust/TS/Python/Go)\n");
+        content.push_str("5. DEPS.txt (if exists)      - Dependencies (cargo tree, etc.)\n\n");
 
-Round 2 (when needed):
-- PACK_STAGE2_COMPRESSED.xml (compressed skeleton)
+        content.push_str("========================================\n");
+        content.push_str("REQUEST_FILE PROTOCOL\n");
+        content.push_str("========================================\n\n");
 
-On demand:
-- Paste specific files/lines requested via REQUEST_PROTOCOL.md.
-"#,
-        )?;
+        content.push_str("When you need to see actual source code, use this format:\n\n");
 
-        Ok(())
+        content.push_str("```yaml\n");
+        content.push_str("REQUEST_FILE:\n");
+        content.push_str("  path: relative/path/to/file.ext\n");
+        content.push_str("  reason: >\n");
+        content.push_str("    What you will inspect or implement.\n");
+        content.push_str("  range: lines 80-140        # optional: specific lines\n");
+        content.push_str("                             # or: symbol: FunctionName\n");
+        content.push_str("```\n\n");
+
+        content.push_str("Guidelines:\n");
+        content.push_str("- Request only what you need (minimize requests)\n");
+        content.push_str("- Consult STRUCTURE.txt and APIS.txt first\n");
+        content.push_str("- Use specific line ranges when possible\n");
+        content.push_str("- Never hallucinate missing code—request it\n\n");
+
+        content.push_str("========================================\n");
+        content.push_str("WORKFLOW EXAMPLE\n");
+        content.push_str("========================================\n\n");
+
+        content.push_str("User: \"test_02 is failing: 'Expected pattern not found: ^code\\.rs$'\"\n\n");
+
+        content.push_str("AI:\n");
+        content.push_str("1. Check STRUCTURE.txt → see gauntlet/ and core/ exist\n");
+        content.push_str("2. Check APIS.txt → see filter.rs has should_keep() method\n");
+        content.push_str("3. REQUEST_FILE gauntlet/src/main.rs (lines around test_02)\n");
+        content.push_str("4. Hypothesis: filtering logic is wrong\n");
+        content.push_str("5. REQUEST_FILE core/src/filter.rs (should_keep method)\n");
+        content.push_str("6. Diagnose: && vs || bug in code_only mode\n");
+        content.push_str("7. Propose fix with diff\n\n");
+
+        content.push_str("========================================\n");
+        content.push_str("TIPS FOR BEST RESULTS\n");
+        content.push_str("========================================\n\n");
+
+        content.push_str("- Start with PROJECT.txt to understand what the codebase does\n");
+        content.push_str("- Use STRUCTURE.txt to locate files by name/path\n");
+        content.push_str("- Use APIS.txt to understand public contracts\n");
+        content.push_str("- Request files only after forming a hypothesis\n");
+        content.push_str("- When fixing bugs, request test files first to understand expectations\n");
+        content.push_str("- Produce complete, compilable changes (no placeholders)\n\n");
+
+        Ok(content)
     }
 
-    pub fn generate_chat_start(&self, pack_dir: &Path, artifacts: &[&str]) -> std::io::Result<()> {
-        let mut content = String::from("# Start message for your LLM\n\n");
-        content.push_str("**Files attached (from `ai-pack/`):**\n");
-
-        for artifact in artifacts {
-            content.push_str(&format!("- {}\n", artifact));
-        }
-
-        content.push_str(
-            r#"
-**Instructions to the AI:**
-Please read the staged context. Use the Ask‑for‑Files Protocol below to request raw source files when needed — do not try to infer missing code.
-
-```yaml
-REQUEST_FILE:
-  path: relative/path/to/file.ext
-  reason: >-
-    What you will inspect or implement.
-  range: lines 80-140      # or: symbol: Foo::bar
-```
-
-**My goal:** <Describe your objective for this repo here.>
-"#,
-        );
-
-        fs::write(pack_dir.join("CHAT_START.md"), content)?;
-        Ok(())
-    }
-
-    pub fn print_guide(&self, pack_dir: &Path, artifacts: &[&str]) {
+    pub fn print_guide(&self, pack_dir: &Path, has_deps: bool) {
         let abs_pack = fs::canonicalize(pack_dir).unwrap_or_else(|_| pack_dir.to_path_buf());
         let abs_pack_str = abs_pack.display().to_string();
-
         let win_pack = self.get_windows_path(&abs_pack_str);
-
         let use_osc8 = self.supports_osc8();
 
         println!();
         println!("╔══════════════════════════════════════════════════════════╗");
-        println!("║  Next steps — Your Saccade pack is ready!                ║");
+        println!("║  Saccade Pack Ready! (5 files max)                       ║");
         println!("╚══════════════════════════════════════════════════════════╝");
-        println!(" 1) Open the pack folder:");
+        println!(" Open pack folder:");
         println!("    • POSIX:   {}", abs_pack_str);
 
         if let Some(ref wp) = win_pack {
             println!("    • Windows: {}", wp);
-            println!("    • Explorer: run → explorer \"{}\"", wp);
         }
 
         if use_osc8 {
             let pack_uri = self.to_file_uri(&win_pack.as_ref().unwrap_or(&abs_pack_str));
-            println!("    • Click:   \x1b]8;;{}\x1b\\open ai-pack folder\x1b]8;;\x1b\\", pack_uri);
+            println!("    • Click:   \x1b]8;;{}\x1b\\open folder\x1b]8;;\x1b\\", pack_uri);
         } else {
             println!("    • Link:    file://{}", abs_pack_str.replace(" ", "%20"));
         }
 
         println!();
-        println!(" 2) Start a chat and attach these files:");
-        for artifact in artifacts {
-            println!("    - {}", artifact);
-        }
-        println!("    (Round 2: attach PACK_STAGE2_COMPRESSED.xml if the model asks for more detail.)");
-
-        println!();
-        println!(" 3) Paste the ready-to-go message:");
-        let chat_path = pack_dir.join("CHAT_START.md");
-        println!("    • Saved at: {}", chat_path.display());
-
-        if use_osc8 {
-            let chat_uri = self.to_file_uri(
-                &win_pack
-                    .as_ref()
-                    .map(|w| format!("{}\\CHAT_START.md", w))
-                    .unwrap_or_else(|| format!("{}/CHAT_START.md", abs_pack_str)),
-            );
-            println!("    • Click:    \x1b]8;;{}\x1b\\open CHAT_START.md\x1b]8;;\x1b\\", chat_uri);
+        println!(" Upload these files to your AI:");
+        println!("    1. GUIDE.txt");
+        println!("    2. PROJECT.txt");
+        println!("    3. STRUCTURE.txt");
+        println!("    4. APIS.txt");
+        if has_deps {
+            println!("    5. DEPS.txt");
         }
 
-        self.try_clipboard_copy(&chat_path);
+        println!();
+        println!(" Then describe your task:");
+        println!("    \"Here's my codebase. I need help with [problem].\"");
+        println!("    \"Error: [paste error message]\"");
+        println!("    \"Feature request: [describe]\"");
 
         println!();
-        println!("==> Done. AI pack is ready in ./{}", pack_dir.display());
+        println!("==> Done. Pack ready in ./{}", pack_dir.display());
     }
 
     fn get_windows_path(&self, posix_path: &str) -> Option<String> {
-        // Try cygpath first
         if let Ok(output) = Command::new("cygpath").args(&["-w", posix_path]).output() {
             if output.status.success() {
                 if let Ok(s) = String::from_utf8(output.stdout) {
@@ -159,7 +138,6 @@ REQUEST_FILE:
             }
         }
 
-        // Fallback: detect MSYS/Git Bash and convert /c/... to C:\...
         if cfg!(windows)
             || env::var("MSYSTEM").is_ok()
             || env::var("OSTYPE").map_or(false, |s| s.starts_with("msys"))
@@ -188,14 +166,9 @@ REQUEST_FILE:
 
     fn to_file_uri(&self, path: &str) -> String {
         if path.contains('\\') {
-            // Windows path
             format!("file:///{}", path.replace('\\', "/").replace(' ', "%20"))
         } else {
             format!("file://{}", path.replace(' ', "%20"))
         }
-    }
-
-    fn try_clipboard_copy(&self, _path: &Path) {
-        // Disabled to prevent hanging in test/CI environments
     }
 }

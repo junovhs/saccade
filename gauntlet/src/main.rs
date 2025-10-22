@@ -303,27 +303,6 @@ fn assert_not_contains(path: &Path, pattern: &str) -> Result<()> {
     Ok(())
 }
 
-fn assert_json_startswith(path: &Path, jq_key: &str, prefix: &str) -> Result<()> {
-    let output = Command::new("jq")
-        .arg("-r")
-        .arg(jq_key)
-        .arg(path)
-        .output()
-        .context("Failed to run jq")?;
-
-    let got = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if !got.starts_with(prefix) {
-        bail!(
-            "JSON value for {} does not start with {} in {} (got {})",
-            jq_key,
-            prefix,
-            path.display(),
-            got
-        );
-    }
-    Ok(())
-}
-
 fn assert_line_count(path: &Path, pattern: &str, expected: usize) -> Result<()> {
     let content = fs::read_to_string(path)
         .with_context(|| format!("Failed to read: {}", path.display()))?;
@@ -344,7 +323,6 @@ fn assert_line_count(path: &Path, pattern: &str, expected: usize) -> Result<()> 
     Ok(())
 }
 
-// New: assert file is non-empty (fixes missing helper error)
 fn assert_gt_zero(path: &Path) -> Result<()> {
     let meta = fs::metadata(path)
         .with_context(|| format!("Failed to stat: {}", path.display()))?;
@@ -382,11 +360,18 @@ edition="2021"
     run_saccade(_ctx, dir, &["--verbose"])?;
 
     let pack = dir.join("ai-pack");
-    assert_file(&pack.join("PACK_MANIFEST.json"))?;
-    assert_json_startswith(&pack.join("PACK_MANIFEST.json"), ".pack_version", "0.3.")?;
-    assert_file(&pack.join("CHAT_START.md"))?;
-    assert_contains(&pack.join("API_SURFACE_RUST.txt"), r"pub\s+fn x\(\)")?;
-    assert_contains(&pack.join("API_SURFACE_TS.txt"), r"^.*export const a=1")?;
+    
+    // Check new 5-file structure
+    assert_file(&pack.join("GUIDE.txt"))?;
+    assert_file(&pack.join("PROJECT.txt"))?;
+    assert_file(&pack.join("STRUCTURE.txt"))?;
+    assert_file(&pack.join("APIS.txt"))?;
+    
+    // Check consolidated API surfaces
+    assert_contains(&pack.join("APIS.txt"), r"pub\s+fn x\(\)")?;
+    assert_contains(&pack.join("APIS.txt"), r"export const a=1")?;
+    assert_contains(&pack.join("APIS.txt"), "API SURFACE: RUST")?;
+    assert_contains(&pack.join("APIS.txt"), "API SURFACE: TYPESCRIPT")?;
 
     Ok(())
 }
@@ -406,11 +391,11 @@ fn test_02_secrets_and_binaries_excluded(_ctx: &TestContext, dir: &Path) -> Resu
 
     run_saccade(_ctx, dir, &["--verbose"])?;
 
-    let index = dir.join("ai-pack/FILE_INDEX.txt");
-    assert_not_contains(&index, r"^\.env$")?;
-    assert_not_contains(&index, r"^private\.pem$")?;
-    assert_not_contains(&index, r"^pic\.png$")?;
-    assert_contains(&index, r"^code\.rs$")?;
+    let structure = dir.join("ai-pack/STRUCTURE.txt");
+    assert_not_contains(&structure, r"^\.env$")?;
+    assert_not_contains(&structure, r"^private\.pem$")?;
+    assert_not_contains(&structure, r"^pic\.png$")?;
+    assert_contains(&structure, r"^code\.rs$")?;
 
     Ok(())
 }
@@ -426,10 +411,10 @@ fn test_03_prune_in_find_mode(_ctx: &TestContext, dir: &Path) -> Result<()> {
 
     run_saccade(_ctx, dir, &["--no-git", "--verbose"])?;
 
-    let index = dir.join("ai-pack/FILE_INDEX.txt");
-    assert_contains(&index, r"^src/app\.js$")?;
-    assert_not_contains(&index, r"^node_modules/")?;
-    assert_not_contains(&index, r"^dist/")?;
+    let structure = dir.join("ai-pack/STRUCTURE.txt");
+    assert_contains(&structure, r"^src/app\.js$")?;
+    assert_not_contains(&structure, r"^node_modules/")?;
+    assert_not_contains(&structure, r"^dist/")?;
 
     Ok(())
 }
@@ -446,13 +431,13 @@ fn test_04_git_vs_find_enumeration(_ctx: &TestContext, dir: &Path) -> Result<()>
 
     // Git mode -> ignored.md excluded
     run_saccade(_ctx, dir, &["--verbose"])?;
-    let index = dir.join("ai-pack/FILE_INDEX.txt");
-    assert_contains(&index, r"^keep\.md$")?;
-    assert_not_contains(&index, r"^ignored\.md$")?;
+    let structure = dir.join("ai-pack/STRUCTURE.txt");
+    assert_contains(&structure, r"^keep\.md$")?;
+    assert_not_contains(&structure, r"^ignored\.md$")?;
 
     // Force find -> ignored.md included
     run_saccade(_ctx, dir, &["--no-git", "--verbose"])?;
-    assert_contains(&index, r"^ignored\.md$")?;
+    assert_contains(&structure, r"^ignored\.md$")?;
 
     Ok(())
 }
@@ -481,11 +466,11 @@ mod inner { pub use super::Foo; }
 
     run_saccade(_ctx, dir, &["--no-git", "--verbose"])?;
 
-    let api = dir.join("ai-pack/API_SURFACE_RUST.txt");
-    assert_contains(&api, r"pub\(crate\)\s+struct Foo")?;
-    assert_contains(&api, r"pub\s+fn bar")?;
-    assert_contains(&api, r"pub\(super\)\s+trait T")?;
-    assert_contains(&api, r"pub\s+use\s+super::Foo")?;
+    let apis = dir.join("ai-pack/APIS.txt");
+    assert_contains(&apis, r"pub\(crate\)\s+struct Foo")?;
+    assert_contains(&apis, r"pub\s+fn bar")?;
+    assert_contains(&apis, r"pub\(super\)\s+trait T")?;
+    assert_contains(&apis, r"pub\s+use\s+super::Foo")?;
 
     Ok(())
 }
@@ -507,12 +492,12 @@ class Abc {}
 
     run_saccade(_ctx, dir, &["--no-git", "--verbose"])?;
 
-    let api = dir.join("ai-pack/API_SURFACE_TS.txt");
-    assert_contains(&api, "export const X")?;
-    assert_not_contains(&api, "const y")?;
-    assert_contains(&api, "export default function alpha")?;
-    assert_contains(&api, r"^.*function Zeta\(")?;
-    assert_contains(&api, r"^.*class Abc")?;
+    let apis = dir.join("ai-pack/APIS.txt");
+    assert_contains(&apis, "export const X")?;
+    assert_not_contains(&apis, "const y")?;
+    assert_contains(&apis, "export default function alpha")?;
+    assert_contains(&apis, r"function Zeta\(")?;
+    assert_contains(&apis, r"class Abc")?;
 
     Ok(())
 }
@@ -529,11 +514,11 @@ class _Hidden: pass
 
     run_saccade(_ctx, dir, &["--no-git", "--verbose"])?;
 
-    let api = dir.join("ai-pack/API_SURFACE_PYTHON.txt");
-    assert_contains(&api, "def public_fn")?;
-    assert_contains(&api, "class Public")?;
-    assert_not_contains(&api, "def _private")?;
-    assert_not_contains(&api, "class _Hidden")?;
+    let apis = dir.join("ai-pack/APIS.txt");
+    assert_contains(&apis, "def public_fn")?;
+    assert_contains(&apis, "class Public")?;
+    assert_not_contains(&apis, "def _private")?;
+    assert_not_contains(&apis, "class _Hidden")?;
 
     Ok(())
 }
@@ -549,9 +534,9 @@ func unexported() {}
 
     run_saccade(_ctx, dir, &["--no-git", "--verbose"])?;
 
-    let api = dir.join("ai-pack/API_SURFACE_GO.txt");
-    assert_contains(&api, r"func\s+Exported\(")?;
-    assert_not_contains(&api, "unexported")?;
+    let apis = dir.join("ai-pack/APIS.txt");
+    assert_contains(&apis, r"func\s+Exported\(")?;
+    assert_not_contains(&apis, "unexported")?;
 
     Ok(())
 }
@@ -567,9 +552,9 @@ fn test_09_frontend_dedup_no_duplicates_in_api(_ctx: &TestContext, dir: &Path) -
 
     run_saccade(_ctx, dir, &["--no-git", "--verbose"])?;
 
-    let api = dir.join("ai-pack/API_SURFACE_TS.txt");
-    assert_line_count(&api, "export const K=1", 1)?;
-    assert_line_count(&api, "export const K2=2", 1)?;
+    let apis = dir.join("ai-pack/APIS.txt");
+    assert_line_count(&apis, "export const K=1", 1)?;
+    assert_line_count(&apis, "export const K2=2", 1)?;
 
     Ok(())
 }
@@ -609,7 +594,7 @@ fn test_12_token_header_uses_div_3_5(_ctx: &TestContext, dir: &Path) -> Result<(
 
     run_saccade(_ctx, dir, &["--no-git"])?;
 
-    assert_contains(&dir.join("ai-pack/TOKENS.txt"), r"bytes/3\.5")?;
+    assert_contains(&dir.join("ai-pack/STRUCTURE.txt"), r"bytes.*3\.5")?;
 
     Ok(())
 }

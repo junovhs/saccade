@@ -77,7 +77,7 @@ impl FileFilter {
 
         // Code-only mode
         if let (Some(ext_re), Some(bare_re)) = (&self.code_ext_re, &self.code_bare_re) {
-            if !ext_re.is_match(&path_str) && !bare_re.is_match(&path_str) {
+            if !ext_re.is_match(&path_str) || !bare_re.is_match(&path_str) {
                 return false;
             }
         }

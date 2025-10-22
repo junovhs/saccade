@@ -12,18 +12,16 @@ impl Stage0Generator {
         Self { config }
     }
 
-    pub fn generate_structure(&self, files: &[std::path::PathBuf]) -> Result<String> {
+    pub fn generate_combined_structure(&self, files: &[std::path::PathBuf]) -> Result<String> {
+        let mut output = String::new();
+
+        // Section 1: Directory Tree
+        output.push_str("========================================\n");
+        output.push_str("DIRECTORY TREE\n");
+        output.push_str("========================================\n\n");
+        
         let mut dirs = BTreeSet::new();
-        let mut filtered_files = BTreeSet::new();
-
         for path in files {
-            let depth = path.components().count();
-
-            if depth <= self.config.max_depth {
-                filtered_files.insert(path.display().to_string());
-            }
-
-            // Extract parent directories up to max_depth
             let mut current = String::new();
             for (i, component) in path.components().enumerate() {
                 if i >= self.config.max_depth - 1 {
@@ -37,26 +35,42 @@ impl Stage0Generator {
             }
         }
 
-        let mut output = String::new();
-        output.push_str(&format!("Directories (depth<={}):\n", self.config.max_depth));
+        output.push_str(&format!("Directories (depth <= {}):\n\n", self.config.max_depth));
         for dir in &dirs {
             output.push_str(dir);
             output.push('\n');
         }
 
-        output.push('\n');
-        output.push_str(&format!("Files (depth<={}, filtered common junk):\n", self.config.max_depth));
-        for file in &filtered_files {
+        // Section 2: File Index
+        output.push_str("\n========================================\n");
+        output.push_str("FILE INDEX\n");
+        output.push_str("========================================\n\n");
+
+        let mut sorted: Vec<String> = files
+            .iter()
+            .map(|p| {
+                let mut s = p.display().to_string();
+                if s.starts_with("./") {
+                    s = s.trim_start_matches("./").to_string();
+                }
+                s
+            })
+            .collect();
+        sorted.sort();
+        sorted.dedup();
+
+        output.push_str(&format!("All files (n = {}):\n\n", sorted.len()));
+        for file in &sorted {
             output.push_str(file);
             output.push('\n');
         }
 
-        Ok(output)
-    }
+        // Section 3: Token Heatmap
+        output.push_str("\n========================================\n");
+        output.push_str("TOKEN HEATMAP\n");
+        output.push_str("========================================\n\n");
 
-    pub fn generate_tokens(&self, files: &[std::path::PathBuf]) -> Result<String> {
         let mut file_sizes: Vec<(u64, String)> = Vec::new();
-
         for path in files {
             if let Ok(metadata) = fs::metadata(path) {
                 let bytes = metadata.len();
@@ -64,15 +78,10 @@ impl Stage0Generator {
             }
         }
 
-        // Sort by size descending
         file_sizes.sort_by(|a, b| b.0.cmp(&a.0));
-
-        // Take top 50
         file_sizes.truncate(50);
 
-        let mut output = String::new();
-        output.push_str("Heuristic Size Heat Map (bytes; ~tokens ≈ bytes/3.5). Top 50:\n");
-
+        output.push_str("Size estimates (bytes → ~tokens via /3.5). Top 50:\n\n");
         for (bytes, path) in file_sizes {
             let est_tokens = (bytes as f64 / 3.5) as u64;
             output.push_str(&format!(
@@ -82,24 +91,6 @@ impl Stage0Generator {
         }
 
         Ok(output)
-    }
-
-    pub fn generate_file_index(&self, files: &[std::path::PathBuf]) -> Result<String> {
-        let mut sorted: Vec<String> = files
-            .iter()
-            .map(|p| {
-                let mut s = p.display().to_string();
-                // Strip ./ prefix for consistency
-                if s.starts_with("./") {
-                    s = s.trim_start_matches("./").to_string();
-                }
-                s
-            })
-            .collect();
-        sorted.sort();
-        sorted.dedup();  // Remove duplicates after normalization
-
-        Ok(sorted.join("\n") + "\n")
     }
 
     pub fn generate_languages(&self, files: &[std::path::PathBuf]) -> Result<String> {
@@ -128,11 +119,10 @@ impl Stage0Generator {
         }
 
         let mut output = String::new();
-        output.push_str("# Language/Extension snapshot\n\n");
+        output.push_str("Language/Extension Snapshot\n\n");
         output.push_str("| Extension | Files |\n");
         output.push_str("|----------:|------:|\n");
 
-        // Sort by count descending
         let mut sorted: Vec<_> = ext_counts.iter().collect();
         sorted.sort_by(|a, b| b.1.cmp(a.1));
 
@@ -140,7 +130,7 @@ impl Stage0Generator {
             output.push_str(&format!("| {} | {} |\n", ext, count));
         }
 
-        output.push_str(&format!("\n_Total files counted: {}_\n", total));
+        output.push_str(&format!("\nTotal files: {}\n", total));
 
         Ok(output)
     }
