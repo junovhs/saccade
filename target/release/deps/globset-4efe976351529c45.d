@@ -1,0 +1,10 @@
+C:\Users\SpencerNunamakerTrav\saccade\target\release\deps\globset-4efe976351529c45.d: C:\Users\SpencerNunamakerTrav\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\globset-0.4.17\src\lib.rs C:\Users\SpencerNunamakerTrav\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\globset-0.4.17\src\fnv.rs C:\Users\SpencerNunamakerTrav\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\globset-0.4.17\src\glob.rs C:\Users\SpencerNunamakerTrav\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\globset-0.4.17\src\pathutil.rs
+
+C:\Users\SpencerNunamakerTrav\saccade\target\release\deps\libglobset-4efe976351529c45.rlib: C:\Users\SpencerNunamakerTrav\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\globset-0.4.17\src\lib.rs C:\Users\SpencerNunamakerTrav\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\globset-0.4.17\src\fnv.rs C:\Users\SpencerNunamakerTrav\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\globset-0.4.17\src\glob.rs C:\Users\SpencerNunamakerTrav\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\globset-0.4.17\src\pathutil.rs
+
+C:\Users\SpencerNunamakerTrav\saccade\target\release\deps\libglobset-4efe976351529c45.rmeta: C:\Users\SpencerNunamakerTrav\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\globset-0.4.17\src\lib.rs C:\Users\SpencerNunamakerTrav\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\globset-0.4.17\src\fnv.rs C:\Users\SpencerNunamakerTrav\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\globset-0.4.17\src\glob.rs C:\Users\SpencerNunamakerTrav\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\globset-0.4.17\src\pathutil.rs
+
+C:\Users\SpencerNunamakerTrav\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\globset-0.4.17\src\lib.rs:
+C:\Users\SpencerNunamakerTrav\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\globset-0.4.17\src\fnv.rs:
+C:\Users\SpencerNunamakerTrav\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\globset-0.4.17\src\glob.rs:
+C:\Users\SpencerNunamakerTrav\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\globset-0.4.17\src\pathutil.rs:

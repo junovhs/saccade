@@ -1,0 +1,14 @@
+# gauntlet/Cargo.toml
+[package]
+name = "saccade-gauntlet"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+tempfile = "3"
+regex = "1"
+
+[[bin]]
+name = "gauntlet"
+path = "src/main.rs"
