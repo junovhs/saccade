@@ -6,7 +6,7 @@ pub mod error;
 pub mod filter;
 pub mod guide;
 pub mod manifest;
-pub mod parser; // <-- ADDED
+pub mod parser;
 pub mod stage0;
 pub mod stage1;
 pub mod stage2;
@@ -137,16 +137,14 @@ impl SaccadePack {
 
         // Optional Stage 2 (compressed skeleton)
         eprintln!("==> [Stage 2] Generating compressed skeleton with internal parser...");
-        let stage2 = Stage2Generator::new();
         let stage2_path = self.config.pack_dir.join("PACK_STAGE2_COMPRESSED.xml");
-        // --- MODIFIED ---
-        // Pass the list of filtered files to the new generate function.
-        match stage2.generate(&filtered_files, &stage2_path) {
+        // Pass the file list to the generate function.
+        // We no longer need the intermediate 'stage2' variable.
+        match Stage2Generator::new().generate(&filtered_files, &stage2_path) {
             Ok(Some(msg)) => eprintln!("    {}", msg),
             Ok(None) => eprintln!("    Internal parser returned no message."),
             Err(e) => eprintln!("    WARN: Internal parser failed: {}", e),
         }
-        // --- END MODIFIED ---
 
         // Print guide (summary lines)
         guide_gen.print_guide(&self.config.pack_dir, has_deps)?;
@@ -173,12 +171,9 @@ impl SaccadePack {
 
         eprintln!("  - Found {} Rust crate(s)", rust_crates.len());
         eprintln!("  - Found {} frontend dir(s)", frontend_dirs.len());
-        
-        // This check is now less meaningful but we can keep it for consistency.
-        let stage2 = Stage2Generator::new();
-        if true { // Our internal parser is always "available"
-            eprintln!("  - Saccade's internal parser is available for Stage 2 compression");
-        }
+
+        // Our internal parser is always "available"
+        eprintln!("  - Saccade's internal parser is available for Stage 2 compression");
 
         Ok(())
     }
