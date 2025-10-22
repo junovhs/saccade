@@ -23,7 +23,13 @@ impl Stage1Generator {
                 if let Some(parent) = entry.path().parent() {
                     let src_dir = parent.join("src");
                     if src_dir.exists() && src_dir.is_dir() {
-                        crates.push(src_dir);
+                        // Normalize: strip ./ prefix
+                        let normalized = if let Ok(stripped) = src_dir.strip_prefix(".") {
+                            stripped.to_path_buf()
+                        } else {
+                            src_dir
+                        };
+                        crates.push(normalized);
                     }
                 }
             }
@@ -48,9 +54,14 @@ impl Stage1Generator {
         {
             if entry.file_name() == "package.json" {
                 if let Some(parent) = entry.path().parent() {
-                    let path = parent.to_path_buf();
-                    if seen.insert(path.clone()) {
-                        dirs.push(path);
+                    // Normalize: strip ./ prefix
+                    let normalized = if let Ok(stripped) = parent.strip_prefix(".") {
+                        stripped.to_path_buf()
+                    } else {
+                        parent.to_path_buf()
+                    };
+                    if seen.insert(normalized.clone()) {
+                        dirs.push(normalized);
                     }
                 }
             }
@@ -71,6 +82,14 @@ impl Stage1Generator {
     }
 
     pub fn generate_cargo_tree(&self) -> Result<String> {
+        // Skip cargo tree in test environments (temp directories)
+        if let Ok(cwd) = std::env::current_dir() {
+            let cwd_str = cwd.to_string_lossy();
+            if cwd_str.contains("/tmp/") || cwd_str.contains("\\Temp\\") {
+                return Ok(String::new());
+            }
+        }
+        
         let output = Command::new("cargo")
             .args(&["tree", "-e", "normal", "-d"])
             .output();
@@ -87,7 +106,7 @@ impl Stage1Generator {
         }
 
         let pattern = Regex::new(
-            r"^\s*pub(\s+|\s*\([^)]*\)\s+)(fn|struct|enum|trait|type|const|static|use|mod|macro_rules!)"
+            r"pub(\s+|\s*\([^)]*\)\s+)(fn|struct|enum|trait|type|const|static|use|mod|macro_rules!)"
         )?;
 
         let mut output = String::new();

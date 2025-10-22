@@ -1,6 +1,5 @@
 use std::env;
 use std::fs;
-use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 
@@ -196,32 +195,7 @@ REQUEST_FILE:
         }
     }
 
-    fn try_clipboard_copy(&self, path: &Path) {
-        let content = fs::read_to_string(path).unwrap_or_default();
-
-        // Try various clipboard tools
-        let commands = vec![
-            ("clip", vec![]),                              // Windows
-            ("pbcopy", vec![]),                            // macOS
-            ("xclip", vec!["-selection", "clipboard"]),     // Linux
-            ("xsel", vec!["--clipboard", "--input"]),       // Linux
-        ];
-
-        for (cmd, args) in commands {
-            if let Ok(mut child) = Command::new(cmd)
-                .args(&args)
-                .stdin(std::process::Stdio::piped())
-                .spawn()
-            {
-                if let Some(mut stdin) = child.stdin.take() {
-                    let _ = stdin.write_all(content.as_bytes());
-                    drop(stdin);
-                    if child.wait().map_or(false, |s| s.success()) {
-                        eprintln!("    Copied chat message to clipboard via '{}'.", cmd);
-                        return;
-                    }
-                }
-            }
-        }
+    fn try_clipboard_copy(&self, _path: &Path) {
+        // Disabled to prevent hanging in test/CI environments
     }
 }

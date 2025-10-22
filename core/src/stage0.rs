@@ -85,8 +85,19 @@ impl Stage0Generator {
     }
 
     pub fn generate_file_index(&self, files: &[std::path::PathBuf]) -> Result<String> {
-        let mut sorted: Vec<String> = files.iter().map(|p| p.display().to_string()).collect();
+        let mut sorted: Vec<String> = files
+            .iter()
+            .map(|p| {
+                let mut s = p.display().to_string();
+                // Strip ./ prefix for consistency
+                if s.starts_with("./") {
+                    s = s.trim_start_matches("./").to_string();
+                }
+                s
+            })
+            .collect();
         sorted.sort();
+        sorted.dedup();  // Remove duplicates after normalization
 
         Ok(sorted.join("\n") + "\n")
     }

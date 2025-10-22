@@ -259,7 +259,14 @@ fn assert_contains(path: &Path, pattern: &str) -> Result<()> {
     let content = fs::read_to_string(path)
         .with_context(|| format!("Failed to read: {}", path.display()))?;
 
-    let re = regex::Regex::new(pattern)
+    // Enable multiline mode for patterns using ^ or $
+    let pattern_with_flags = if pattern.contains('^') || pattern.contains('$') {
+        format!("(?m){}", pattern)
+    } else {
+        pattern.to_string()
+    };
+
+    let re = regex::Regex::new(&pattern_with_flags)
         .with_context(|| format!("Invalid regex: {}", pattern))?;
 
     if !re.is_match(&content) {
@@ -276,7 +283,14 @@ fn assert_not_contains(path: &Path, pattern: &str) -> Result<()> {
     let content = fs::read_to_string(path)
         .with_context(|| format!("Failed to read: {}", path.display()))?;
 
-    let re = regex::Regex::new(pattern)
+    // Enable multiline mode for patterns using ^ or $
+    let pattern_with_flags = if pattern.contains('^') || pattern.contains('$') {
+        format!("(?m){}", pattern)
+    } else {
+        pattern.to_string()
+    };
+
+    let re = regex::Regex::new(&pattern_with_flags)
         .with_context(|| format!("Invalid regex: {}", pattern))?;
 
     if re.is_match(&content) {
@@ -369,7 +383,7 @@ edition="2021"
 
     let pack = dir.join("ai-pack");
     assert_file(&pack.join("PACK_MANIFEST.json"))?;
-    assert_json_startswith(&pack.join("PACK_MANIFEST.json"), ".pack_version", r#""0.3."#)?;
+    assert_json_startswith(&pack.join("PACK_MANIFEST.json"), ".pack_version", "0.3.")?;
     assert_file(&pack.join("CHAT_START.md"))?;
     assert_contains(&pack.join("API_SURFACE_RUST.txt"), r"pub\s+fn x\(\)")?;
     assert_contains(&pack.join("API_SURFACE_TS.txt"), r"^.*export const a=1")?;
