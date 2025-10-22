@@ -507,7 +507,7 @@ fn tool_exists(cmd: &str) -> bool {
 /// Accepts non-zero exit codes (some tools use them to signal issues but still print useful trees).
 fn run_collect_any_status(cmd: &str, args: &[&str]) -> Option<String> {
     let out = Command::new(cmd).args(args).output().ok()?;
-    let mut s = collect_string(out).unwrap_or_default();
+    let s = collect_string(out).unwrap_or_default();
     if s.trim().is_empty() {
         return None;
     }
@@ -545,7 +545,7 @@ fn clamp_and_scrub(s: &str, label: &str) -> String {
 
 fn clamp_block(s: &str, label: &str) -> String {
     // byte clamp first (cheap guard)
-    let mut text = if s.len() > DEPS_SECTION_MAX_BYTES {
+    let text = if s.len() > DEPS_SECTION_MAX_BYTES {
         let mut t = s[..DEPS_SECTION_MAX_BYTES].to_string();
         t.push_str(&format!(
             "\n… [truncated to {} bytes for {}]",
