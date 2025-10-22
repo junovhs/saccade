@@ -1,16 +1,16 @@
+// core/src/parser.rs
+
 use std::collections::{HashMap, HashSet};
 use std::str;
-
 use tree_sitter::{Node, Parser, Query, QueryCursor};
 
 const CHUNK_SEPARATOR: &str = "\n---⋯\n";
 
-/// ─────────────────────────────────────────────────────────────────────────
-/// LANGUAGE-SPECIFIC QUERIES
-/// Keep node-type names aligned with the grammar we load.
-/// ─────────────────────────────────────────────────────────────────────────
+/// ─────────────────────────────────────────────────────────────────────
+/// LANGUAGE-SPECIFIC QUERIES (separate per language to avoid drift)
+/// ─────────────────────────────────────────────────────────────────────
 
-// JavaScript / JSX
+// JavaScript / JSX / MJS / CJS
 const JAVASCRIPT_QUERY: &str = r#"
 (import_statement) @capture
 (export_statement) @capture
@@ -33,15 +33,11 @@ const JAVASCRIPT_QUERY: &str = r#"
   )
 ) @def
 
-(pair
-  key: (_)
-  value: (function
-    body: (statement_block) @body
-  )
-) @def
-
 (arrow_function
   body: (_) @body) @def
+
+; NOTE: We intentionally skip the object-literal `(pair value: (function ...))`
+; rule here to reduce grammar fragility across versions.
 "#;
 
 // TypeScript / TSX
@@ -70,25 +66,14 @@ const TYPESCRIPT_QUERY: &str = r#"
   )
 ) @def
 
-(pair
-  key: (_)
-  value: (function_expression
-    body: (statement_block) @body
-  )
-) @def
-
 (arrow_function
   body: (_) @body) @def
-
-(function_signature) @def
-(method_signature) @def
 "#;
 
-// Rust
+// Rust — use only field names for body to avoid node-type drift
 const RUST_QUERY: &str = r#"
 (line_comment) @capture
 (block_comment) @capture
-(attribute_item) @capture
 (use_declaration) @capture
 (extern_crate_declaration) @capture
 (struct_item) @capture
@@ -99,13 +84,13 @@ const RUST_QUERY: &str = r#"
 (macro_definition) @capture
 
 (function_item
-  body: (block_expression) @body) @def
+  body: (_) @body) @def
 
 (trait_item
-  body: (declaration_list) @body) @def
+  body: (_) @body) @def
 
 (impl_item
-  body: (declaration_list) @body) @def
+  body: (_) @body) @def
 "#;
 
 // Python
@@ -119,46 +104,59 @@ const PYTHON_QUERY: &str = r#"
 
 (class_definition
   body: (block) @body) @def
-
-(decorated_definition
-  (function_definition
-    body: (block) @body) @def)
-
-(decorated_definition
-  (class_definition
-    body: (block) @body) @def)
 "#;
 
 /// Skeletonizes a single file's content using Tree-sitter.
+/// Returns a token-light “skeleton”: defs with bodies stripped + salient captures.
 pub fn skeletonize_file(content: &str, file_extension: &str) -> Option<String> {
-    let (language, query_src) = match file_extension {
-        "ts" | "tsx" => (tree_sitter_typescript::language_tsx(), TYPESCRIPT_QUERY),
-        "js" | "jsx" | "mjs" | "cjs" => (tree_sitter_javascript::language(), JAVASCRIPT_QUERY),
-        "rs" => (tree_sitter_rust::language(), RUST_QUERY),
-        "py" => (tree_sitter_python::language(), PYTHON_QUERY),
+    enum Lang<'a> {
+        Js(&'a str),
+        Ts(&'a str),
+        Rs(&'a str),
+        Py(&'a str),
+    }
+
+    let lang = match file_extension {
+        // JavaScript-family (explicitly include mjs/cjs)
+        "js" | "jsx" | "mjs" | "cjs" => {
+            Lang::Js(JAVASCRIPT_QUERY)
+        }
+        // TypeScript-family
+        "ts" | "tsx" => {
+            Lang::Ts(TYPESCRIPT_QUERY)
+        }
+        "rs" => Lang::Rs(RUST_QUERY),
+        "py" => Lang::Py(PYTHON_QUERY),
         _ => return None,
     };
 
     let mut parser = Parser::new();
+
+    // Select language + query string
+    let (language, query_str) = match lang {
+        Lang::Js(q) => (tree_sitter_javascript::language(), q),
+        Lang::Ts(q) => (tree_sitter_typescript::language_tsx(), q),
+        Lang::Rs(q) => (tree_sitter_rust::language(), q),
+        Lang::Py(q) => (tree_sitter_python::language(), q),
+    };
+
     if let Err(e) = parser.set_language(&language) {
-        eprintln!("WARN: failed to load language for .{}: {}", file_extension, e);
+        eprintln!("WARN: set_language failed for .{}: {}", file_extension, e);
         return None;
     }
 
     let tree = match parser.parse(content, None) {
         Some(t) => t,
-        None => {
-            eprintln!("WARN: parse returned None for .{}", file_extension);
-            return None;
-        }
+        None => return None,
     };
 
-    let query = match Query::new(&language, query_src) {
+    let query = match Query::new(&language, query_str) {
         Ok(q) => q,
         Err(e) => {
+            // Avoid noisy panics; print a compact one-liner and skip.
             eprintln!(
-                "WARN: query failed for .{}: {:?} (row {}, col {})",
-                file_extension, e, e.row, e.column
+                "WARN: query compile failed for .{} at row {} col {}: {}",
+                file_extension, e.row, e.column, e.message
             );
             return None;
         }
@@ -167,68 +165,71 @@ pub fn skeletonize_file(content: &str, file_extension: &str) -> Option<String> {
     let mut cursor = QueryCursor::new();
     let matches = cursor.matches(&query, tree.root_node(), content.as_bytes());
 
-    let mut results: Vec<(usize, String)> = Vec::new();
-    let mut processed: HashSet<usize> = HashSet::new();
+    let mut results = Vec::new();
+    let mut seen_ids: HashSet<usize> = HashSet::new();
 
     for m in matches {
-        let mut by_name: HashMap<&str, Node> = HashMap::new();
-        for cap in m.captures {
-            let name = &query.capture_names()[cap.index as usize];
-            by_name.insert(name, cap.node);
+        // Map capture name → node
+        let mut caps: HashMap<&str, Node> = HashMap::new();
+        for c in m.captures {
+            let name = &query.capture_names()[c.index as usize];
+            caps.insert(name, c.node);
         }
 
-        // def/body pair → slice signature
-        if let (Some(def), Some(body)) = (by_name.get("def"), by_name.get("body")) {
-            let def_id = def.id();
-            if processed.insert(def_id) {
+        // Prefer def/body pairs → slice signature text only
+        if let (Some(def), Some(body)) = (caps.get("def"), caps.get("body")) {
+            let def_id = def.id() as usize;
+            if !seen_ids.contains(&def_id) {
                 let start = def.start_byte();
                 let end = body.start_byte();
-                if end >= start && end <= content.len() {
+                if end >= start {
                     if let Some(sig) = safe_slice(content, start, end) {
-                        let text = sig.trim().to_string();
-                        if !text.is_empty() {
-                            results.push((start, text));
+                        let sig_trim = sig.trim();
+                        if !sig_trim.is_empty() {
+                            results.push(sig_trim.to_string());
                         }
                     }
                 }
+                seen_ids.insert(def_id);
             }
             continue;
         }
 
-        // simple captures
-        if let Some(node) = by_name.get("capture") {
-            let id = node.id();
-            if processed.insert(id) {
-                if let Ok(text) = node.utf8_text(content.as_bytes()) {
+        // Otherwise, simple capture (imports/comments/etc.)
+        if let Some(cap) = caps.get("capture") {
+            let id = cap.id() as usize;
+            if !seen_ids.contains(&id) {
+                if let Ok(text) = cap.utf8_text(content.as_bytes()) {
                     let t = text.trim();
                     if !t.is_empty() {
-                        results.push((node.start_byte(), t.to_string()));
+                        results.push(t.to_string());
                     }
                 }
+                seen_ids.insert(id);
             }
+            continue;
         }
 
-        // def without body
-        if let Some(def) = by_name.get("def") {
-            let id = def.id();
-            if processed.insert(id) {
+        // Def with no body (e.g., TS overloads)
+        if let Some(def) = caps.get("def") {
+            let id = def.id() as usize;
+            if !seen_ids.contains(&id) {
                 if let Ok(text) = def.utf8_text(content.as_bytes()) {
                     let t = text.trim();
                     if !t.is_empty() {
-                        results.push((def.start_byte(), t.to_string()));
+                        results.push(t.to_string());
                     }
                 }
+                seen_ids.insert(id);
             }
         }
     }
 
     if results.is_empty() {
-        return None;
+        None
+    } else {
+        Some(results.join(CHUNK_SEPARATOR))
     }
-
-    results.sort_by_key(|(pos, _)| *pos);
-    let chunks: Vec<String> = results.into_iter().map(|(_, s)| s).collect();
-    Some(chunks.join(CHUNK_SEPARATOR))
 }
 
 /// Return a &str slice by byte offsets, guarding UTF-8 boundaries.
@@ -236,9 +237,14 @@ fn safe_slice<'a>(s: &'a str, start: usize, end: usize) -> Option<&'a str> {
     if start > end || end > s.len() {
         return None;
     }
-    if !s.is_char_boundary(start) || !s.is_char_boundary(end) {
-        let bytes = &s.as_bytes()[start..end];
-        return str::from_utf8(bytes).ok();
+    // Walk to valid char boundaries (cheap scans; files are small-ish here)
+    let mut a = start;
+    while a > 0 && !s.is_char_boundary(a) {
+        a -= 1;
     }
-    Some(&s[start..end])
+    let mut b = end;
+    while b < s.len() && !s.is_char_boundary(b) {
+        b += 1;
+    }
+    s.get(a..b)
 }
