@@ -1,48 +1,49 @@
-````markdown
 # 👁️ Saccade
 
-**Give your AI eyes — the sensory organ for your codebase.**
+**Give your AI eyes on your codebase.**
 
-Saccade scans your repo and produces a layered, token‑efficient “context pack” that lets LLMs *see* the architecture without slurping every byte. It pairs perfectly with **ApplyDiff** to form an end‑to‑end loop: scan → reason → patch.
+Saccade scans a repo and produces a **small, reliable, token-efficient context pack** so LLMs can understand structure, APIs, and hotspots **without** slurping the whole tree. It now includes a **built-in Tree-sitter skeletonizer** (no external compressor required).
 
 ---
 
-## Why Saccade?
+## How it works (biologically inspired)
 
-LLMs are powerful but *context‑hungry*. Pasting raw repos is slow, expensive, and leaky. Saccade mimics human vision:
+1) **Peripheral Vision (Stage 0)** — fast global map  
+   `STRUCTURE.txt` → shallow directory tree (depth-limited) **+** file index **+** size heatmap (top offenders).  
+   Goal: prune obvious noise and show where code lives.
 
-1. **Peripheral Vision (Stage 0)** – Fast global map
-   - `STRUCTURE.txt` — shallow tree (dirs/files)
-   - `TOKENS.txt` — size heatmap (top 50 by bytes)
-   - `FILE_INDEX.txt` — filtered file list
-2. **Feature Detection (Stage 1)** – Contracts & wiring
-   - `CARGO_TREE_DEDUP.txt` (if Rust)
-   - `API_SURFACE_*` — Rust pub items; TS/JS exports; Python defs/classes; Go exported funcs
-3. **Focused Gaze (Stage 2)** – Compressed code skeleton (optional)
-   - `PACK_STAGE2_COMPRESSED.xml` via Repomix (imports, signatures, types – no bodies)
+2) **Feature Detection (Stage 1)** — contracts & wiring  
+   `APIS.txt` → public surfaces across languages (Rust `pub` items; TS/JS exports; Python `def`/`class` that aren’t private).  
+   `DEPS.txt` → dependency snapshots (e.g., `cargo tree` summaries).  
+   Goal: expose what modules promise to the outside.
 
-A simple **Ask‑for‑Files Protocol** teaches the AI to request raw source on demand.
+3) **Focused Gaze (Stage 2)** — compressed code skeleton  
+   `PACK_STAGE2_COMPRESSED.xml` → **internal Tree-sitter** extracts **signatures only** (functions/methods/classes); bodies stripped.  
+   Goal: preserve intent and shape, not implementation tokens.
+
+`GUIDE.txt` explains how to use the pack; `PROJECT.txt` captures repo intent, entry points, and your current task.
 
 ---
 
 ## Quickstart
 
 ```bash
-# Clone or curl the single-file script
-git clone https://github.com/junovhs/saccade.git
-cd saccade
-chmod +x saccade
+# Build once
+cargo build --workspace
 
-# Run inside any project
-./saccade
+# Run inside any repository
+./target/debug/saccade
 
-# The pack appears in ./ai-pack/
+# Artifacts go to ./ai-pack/
+# On Windows PowerShell:
+# .\target\debug\saccade.exe
 ````
 
-Optional: add to your PATH:
+Scan another repo:
 
 ```bash
-export PATH="$PATH:$(pwd)"
+cd /path/to/other/repo
+"/path/to/saccade/target/debug/saccade.exe" --out ai-pack-other
 ```
 
 ---
@@ -53,12 +54,12 @@ export PATH="$PATH:$(pwd)"
 saccade [options]
 
   -o, --out <dir>          Output directory (default: ai-pack)
-      --max-depth <N>      Stage-0 overview depth (default: 3)
-      --git-only           Use Git tracked/unignored files (default in Git repos)
-      --no-git             Force find-based enumeration
-      --include "<re,...>" Only include paths matching any of the regexes (comma-separated, case-insensitive)
-      --exclude "<re,...>" Exclude paths matching any of the regexes
-      --code-only          Restrict Stage-0 lists to code/config/markup
+      --max-depth <N>      Structure tree depth (default: 3)
+      --git-only           Use Git tracked/unignored files
+      --no-git             Force non-Git enumeration
+      --include "<re,...>" Keep paths matching any regex (comma-separated)
+      --exclude "<re,...>" Drop paths matching any regex
+      --code-only          Keep only code/config/markup + bare build files
   -v, --verbose            Verbose logs
       --version            Show version
       -h, --help           Help
@@ -70,55 +71,61 @@ saccade [options]
 # Minimal
 saccade
 
-# Strict and small
+# Smaller, more focused
 saccade --git-only --code-only --max-depth 2
 
-# Focus on src/ and tools/, but skip migrations
-saccade --include "^(src|tools)/" --exclude "migrations|fixtures"
+# Targeted scan (regex): only src/ and tools/, skip tests and fixtures
+saccade --include "^(src|tools)/" --exclude "(^|/)__?tests__?(/|$)|fixtures"
 ```
 
 ---
 
-## What’s in the Pack?
+## What’s in the pack?
 
-* `OVERVIEW.md` – Fill this once; it orients the AI.
-* `STRUCTURE.txt` – Directories/files (depth‑limited).
-* `TOKENS.txt` – File size heatmap (~token estimate).
-* `FILE_INDEX.txt` – Filtered file list.
-* `LANGUAGES.md` – Extension snapshot.
-* `CARGO_TREE_DEDUP.txt` – Rust deps (if Cargo).
-* `API_SURFACE_RUST.txt` – Public Rust items (`pub`).
-* `API_SURFACE_TS.txt` – TS/JS/TSX/JSX exports & defs.
-* `API_SURFACE_PYTHON.txt` – `def`/`class` signatures.
-* `API_SURFACE_GO.txt` – Exported Go functions.
-* `PACK_STAGE2_COMPRESSED.xml` – (Optional) compressed skeleton via Repomix.
-* `REQUEST_PROTOCOL.md` – YAML ask‑for‑files template.
-* `PACK_MANIFEST.json` – Version, timestamp, counts, artifact sizes.
+* `GUIDE.txt` — How to use the pack & Ask-for-Files protocol
+* `PROJECT.txt` — Intent, entry points, current task
+* `STRUCTURE.txt` — Directory tree (depth-limited), file index, size heatmap
+* `APIS.txt` — Public/API surfaces (Rust/TS-JS/Python)
+* `DEPS.txt` — Dependency overview (e.g., Cargo tree, duplicates)
+* `PACK_STAGE2_COMPRESSED.xml` — **Signatures-only** skeleton (Tree-sitter)
+
+> Design goal: the **sum** of these files must be *smaller* than dumping a repo but **more reliable** for planning and patching.
 
 ---
 
-## Safety & Performance
+## Token-budget tips
 
-* **Respects `.gitignore` by default** (uses `git ls-files` if in a repo).
-* **Prunes** common vendor/build/cache directories (`node_modules`, `dist`, `target`, etc.).
-* **Excludes secrets** like `.env*`, `*.pem`, SSH keys, and **ignores binaries** (`png`, `pdf`, `zip`, media, dbs).
-* **Zero mandatory dependencies**: `git`, `cargo`, and `repomix` are optional accelerators.
+* Use `--code-only` to drop prose/assets.
+* Narrow with `--include/--exclude` (regex).
+* Reduce `--max-depth` for shallower trees.
+* Large monorepos: scan subtrees separately.
 
 ---
 
-## Saccade + ApplyDiff
+## Language support (Stage 2)
 
-1. **👁️ Saccade** – Generate the pack.
-2. **🧠 Your LLM** – Analyze, propose changes, generate a patch.
-3. **🖐️ ApplyDiff** – Apply the AI’s patch safely.
+* **TypeScript / JavaScript** (`.ts/.tsx/.js/.jsx/.mjs/.cjs`): exported functions/classes; bodies removed.
+* **Rust** (`.rs`): `pub fn` and `pub trait` signatures (no bodies).
+* **Python** (`.py`): public `def`/`class` (names not starting with `_`), bodies removed.
+
+APIs in `APIS.txt` may include additional ecosystems (language-specific heuristics).
+
+---
+
+## Safety & performance
+
+* Honors `.gitignore` via `git ls-files` when available.
+* Prunes vendor/build/cache directories by default.
+* Drops secrets (`.env*`, keys, certs) and binaries/media.
+* Bounded passes; no recursion in hot paths.
 
 ---
 
 ## Contributing
 
-PRs and issues welcome! See `CONTRIBUTING.md` for guidelines.
+Issues and PRs welcome. Please keep functions small, loops bounded, and add tests for new filters/parsers.
 
 ## License
 
-MIT. See `LICENSE`.
+MIT
 
