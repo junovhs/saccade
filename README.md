@@ -1,124 +1,191 @@
-````markdown
-# 👁️ Saccade
+### `README.md`
 
-**Give your AI eyes — the sensory organ for your codebase.**
 
-Saccade scans your repo and produces a layered, token‑efficient “context pack” that lets LLMs *see* the architecture without slurping every byte. It pairs perfectly with **ApplyDiff** to form an end‑to‑end loop: scan → reason → patch.
+# Saccade v0.3.0 — Legacy Bash Prototype
 
----
-
-## Why Saccade?
-
-LLMs are powerful but *context‑hungry*. Pasting raw repos is slow, expensive, and leaky. Saccade mimics human vision:
-
-1. **Peripheral Vision (Stage 0)** – Fast global map
-   - `STRUCTURE.txt` — shallow tree (dirs/files)
-   - `TOKENS.txt` — size heatmap (top 50 by bytes)
-   - `FILE_INDEX.txt` — filtered file list
-2. **Feature Detection (Stage 1)** – Contracts & wiring
-   - `CARGO_TREE_DEDUP.txt` (if Rust)
-   - `API_SURFACE_*` — Rust pub items; TS/JS exports; Python defs/classes; Go exported funcs
-3. **Focused Gaze (Stage 2)** – Compressed code skeleton (optional)
-   - `PACK_STAGE2_COMPRESSED.xml` via Repomix (imports, signatures, types – no bodies)
-
-A simple **Ask‑for‑Files Protocol** teaches the AI to request raw source on demand.
+> _This document serves as a technical record of the original Bash-based
+> implementation of **Saccade**, the staged codebase summarizer for LLM context packing.
+> It is preserved for historical and architectural reference._
 
 ---
 
-## Quickstart
+## Overview
 
+This Bash script (`saccade.sh`) was the first functional implementation of **Saccade** —
+a deterministic, zero-dependency pipeline that transforms an arbitrary source repository
+into a **multi-stage, token-efficient "AI pack"** ready for large language model ingestion.
+
+It achieved this using only POSIX shell tools (`find`, `grep`, `awk`, `sed`, `git`, `cargo`, etc.),
+and optional helpers (`repomix`, `python3`, `clip`), while remaining portable across macOS, Linux,
+and Git Bash on Windows.
+
+The script enforced a consistent *philosophy of clarity and reproducibility*:
+> “The AI should see only what matters — structure, interfaces, and concise metadata —
+> not noise, not bulk.”
+
+---
+
+## Stage Model
+
+Saccade’s pipeline was divided into discrete **stages**, each producing an artifact
+designed for predictable downstream token usage and human auditability.
+
+| Stage | Artifact | Purpose |
+|-------|-----------|----------|
+| 0 | `STRUCTURE.txt`, `TOKENS.txt`, `FILE_INDEX.txt` | Directory and file summaries; token heat map |
+| 1 | `API_SURFACE_*.txt`, `CARGO_TREE_DEDUP.txt` | Public API and dependency surfaces |
+| 2 | `PACK_STAGE2_COMPRESSED.xml` | Compact code skeleton (via `repomix`) |
+| — | `PACK_MANIFEST.json`, `LANGUAGES.md`, etc. | Machine-readable metadata for every run |
+
+### Stage 0 — Enumeration and Filtering
+
+Enumerated all files either through:
+- **Git** (`git ls-files --exclude-standard`) for tracked and unignored files, or
+- **find** for fallback enumeration when no Git repo existed.
+
+Then filtered aggressively:
+- Removed binaries, media, credentials, `.env` files, caches, and test data.
+- Applied inclusion/exclusion regexes.
+- Optional `--code-only` mode that restricted to known code/config/markup extensions
+  or bare build files (e.g., `Makefile`, `Dockerfile`).
+
+Produced:
+- `STRUCTURE.txt`: tree up to `--max-depth`.
+- `TOKENS.txt`: estimated token counts (`bytes / 3.5` heuristic).
+- `FILE_INDEX.txt`: sorted flat list for later reuse.
+
+### Stage 1 — Surface Extraction
+
+Scanned filtered files using language-specific heuristics:
+
+| Language | Method |
+|-----------|---------|
+| **Rust** | `grep -E '^\s*pub'` for public items (`fn`, `struct`, `trait`, etc.) |
+| **TS/JS** | `grep -E 'export'` and top-level PascalCase functions/classes |
+| **Python** | `awk` to capture `def`/`class` with names not starting `_` |
+| **Go** | `grep -E '^func [A-Z]'` for exported functions |
+
+For Rust projects, also captured:
 ```bash
-# Clone or curl the single-file script
-git clone https://github.com/junovhs/saccade.git
-cd saccade
-chmod +x saccade
-
-# Run inside any project
-./saccade
-
-# The pack appears in ./ai-pack/
-````
-
-Optional: add to your PATH:
-
-```bash
-export PATH="$PATH:$(pwd)"
+cargo tree -e normal -d > CARGO_TREE_DEDUP.txt
 ```
 
+to summarize dependency graphs.
+
+### Stage 2 — Compression (Optional)
+
+If the `repomix` CLI was present, Stage 2 would:
+
+* Generate `PACK_STAGE2_COMPRESSED.xml` with
+  `--compress --remove-comments --remove-empty-lines`,
+  providing a syntax-aware skeleton of the codebase.
+* Fallback gracefully if `repomix` was missing.
+
+Stage 2 was conceptually the **ancestor** of the modern `Tree-sitter` skeletonizer now used in the Rust rewrite.
+
 ---
 
-## CLI
+## Key Design Philosophies
 
-```text
-saccade [options]
+### 1. **Determinism Over Heuristics**
 
-  -o, --out <dir>          Output directory (default: ai-pack)
-      --max-depth <N>      Stage-0 overview depth (default: 3)
-      --git-only           Use Git tracked/unignored files (default in Git repos)
-      --no-git             Force find-based enumeration
-      --include "<re,...>" Only include paths matching any of the regexes (comma-separated, case-insensitive)
-      --exclude "<re,...>" Exclude paths matching any of the regexes
-      --code-only          Restrict Stage-0 lists to code/config/markup
-  -v, --verbose            Verbose logs
-      --version            Show version
-      -h, --help           Help
-```
+Every stage was designed to yield deterministic, repeatable output:
+same repo → same pack.
+No randomness, timestamps excluded from structural data.
 
-**Examples**
+This enabled reproducibility across machines and easy diffing of packs over time.
+
+### 2. **Progressive Disclosure**
+
+The pack embodied a **progressive disclosure model**:
+
+* Stage 0 shows shape.
+* Stage 1 shows public interfaces.
+* Stage 2 shows structure.
+* Raw source only when requested.
+
+This mapped directly onto the AI interaction model defined in `REQUEST_PROTOCOL.md`.
+
+### 3. **Token Efficiency as a First-Class Metric**
+
+Token economy was treated as a measurable engineering constraint:
+
+* Tokens ≈ bytes / 3.5 heuristic for English code.
+* Heatmaps and file size ranks enabled humans (and models) to reason about budget tradeoffs.
+* Stage 2 compression targeted ~10× reduction without semantic loss.
+
+### 4. **Zero Dependencies, Maximum Predictability**
+
+By using only standard UNIX tools, the prototype could run anywhere, even in constrained environments.
+It served as an existence proof that Saccade’s concept didn’t require large dependencies.
+
+However, this portability came at a cost:
+
+* Regex-based language detection was brittle.
+* `grep` and `awk` lacked real AST context.
+* Cross-platform path handling was messy.
+
+### 5. **Human-Centric UX**
+
+Colorized logging (`==>`, `INFO`, `WARN`), OSC8 hyperlinks, and clipboard automation (`clip`, `pbcopy`, `xclip`)
+made the pack feel like a polished CLI product, not a research script.
+
+The **“AI pack is ready”** summary banner and chat-template generation were deliberate affordances:
+they bridged human preparation and AI consumption seamlessly.
+
+---
+
+## Evolution and Limitations
+
+| Area              | Limitation in Bash Prototype               | Resolution in Rust Rewrite                       |
+| ----------------- | ------------------------------------------ | ------------------------------------------------ |
+| **Parsing**       | Grep/awk approximations; false positives.  | Tree-sitter AST queries with body-stripping.     |
+| **Portability**   | Fragile path escaping on Windows.          | Cross-platform file handling via Rust `PathBuf`. |
+| **Performance**   | O(N) spawn cost for `grep`/`awk` per file. | In-memory parsing, parallelizable in future.     |
+| **Safety**        | Exit-on-error; partial cleanup on fail.    | Structured error handling, bounded loops.        |
+| **Extensibility** | Adding a language = new regex.             | Plug in new Tree-sitter grammar and query.       |
+
+The prototype demonstrated the viability of **context staging** but was eventually replaced by the
+Rust implementation for correctness, performance, and maintainability.
+
+---
+
+## Legacy Value
+
+This script remains instructive for:
+
+* **Design provenance** — it codifies the initial heuristics behind Saccade’s stage model.
+* **Zero-dep fallback** — still usable in environments where the Rust binary cannot run.
+* **Debugging and validation** — its outputs serve as a ground-truth reference
+  for comparing structural coverage between regex vs. AST-based approaches.
+
+If you wish to run it today:
 
 ```bash
-# Minimal
-saccade
-
-# Strict and small
-saccade --git-only --code-only --max-depth 2
-
-# Focus on src/ and tools/, but skip migrations
-saccade --include "^(src|tools)/" --exclude "migrations|fixtures"
+chmod +x saccade.sh
+./saccade.sh --out legacy-pack --code-only
 ```
 
----
-
-## What’s in the Pack?
-
-* `OVERVIEW.md` – Fill this once; it orients the AI.
-* `STRUCTURE.txt` – Directories/files (depth‑limited).
-* `TOKENS.txt` – File size heatmap (~token estimate).
-* `FILE_INDEX.txt` – Filtered file list.
-* `LANGUAGES.md` – Extension snapshot.
-* `CARGO_TREE_DEDUP.txt` – Rust deps (if Cargo).
-* `API_SURFACE_RUST.txt` – Public Rust items (`pub`).
-* `API_SURFACE_TS.txt` – TS/JS/TSX/JSX exports & defs.
-* `API_SURFACE_PYTHON.txt` – `def`/`class` signatures.
-* `API_SURFACE_GO.txt` – Exported Go functions.
-* `PACK_STAGE2_COMPRESSED.xml` – (Optional) compressed skeleton via Repomix.
-* `REQUEST_PROTOCOL.md` – YAML ask‑for‑files template.
-* `PACK_MANIFEST.json` – Version, timestamp, counts, artifact sizes.
+All artifacts will appear in `legacy-pack/`.
 
 ---
 
-## Safety & Performance
+## License & Preservation
 
-* **Respects `.gitignore` by default** (uses `git ls-files` if in a repo).
-* **Prunes** common vendor/build/cache directories (`node_modules`, `dist`, `target`, etc.).
-* **Excludes secrets** like `.env*`, `*.pem`, SSH keys, and **ignores binaries** (`png`, `pdf`, `zip`, media, dbs).
-* **Zero mandatory dependencies**: `git`, `cargo`, and `repomix` are optional accelerators.
+This historical version is covered by the same license as the main Saccade project.
 
----
+It is preserved on the branch:
 
-## Saccade + ApplyDiff
+```
+legacy/bash-prototype
+```
 
-1. **👁️ Saccade** – Generate the pack.
-2. **🧠 Your LLM** – Analyze, propose changes, generate a patch.
-3. **🖐️ ApplyDiff** – Apply the AI’s patch safely.
+It will not receive further feature updates but may be retained indefinitely as a record of
+Saccade’s origin and as a fallback reference implementation.
 
 ---
 
-## Contributing
-
-PRs and issues welcome! See `CONTRIBUTING.md` for guidelines.
-
-## License
-
-MIT. See `LICENSE`.
+> “Every robust system begins as a well-reasoned script.”
+>
+> — *Design note from the first Saccade commit, 2024*
 
