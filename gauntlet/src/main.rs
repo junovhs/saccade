@@ -247,6 +247,7 @@ fn assert_file(path: &Path) -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn assert_nofile(path: &Path) -> Result<()> {
     if path.exists() {
         bail!("Expected file to be absent: {}", path.display());

@@ -14,13 +14,30 @@ impl FileEnumerator {
     }
 
     pub fn enumerate(&self) -> Result<Vec<PathBuf>> {
-        // Prefer Git when available and inside a repo; otherwise fallback to WalkDir.
-        if self.in_git_repo()? {
-            if let Ok(files) = self.git_ls_files() {
-                return Ok(files);
+        use crate::config::GitMode;
+        
+        match self.config.git_mode {
+            GitMode::Yes => {
+                // Force Git mode
+                if !self.in_git_repo()? {
+                    return Err(SaccadeError::NotInGitRepo);
+                }
+                self.git_ls_files()
+            }
+            GitMode::No => {
+                // Force find mode
+                self.walk_all_files()
+            }
+            GitMode::Auto => {
+                // Prefer Git when available and inside a repo; otherwise fallback to WalkDir
+                if self.in_git_repo()? {
+                    if let Ok(files) = self.git_ls_files() {
+                        return Ok(files);
+                    }
+                }
+                self.walk_all_files()
             }
         }
-        self.walk_all_files()
     }
 
     fn in_git_repo(&self) -> Result<bool> {

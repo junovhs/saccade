@@ -1,8 +1,7 @@
 use crate::config::Config;
-use crate::error::{Result, SaccadeError};
+use crate::error::Result;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::Path;
 
 pub struct Stage0Generator {
     config: Config,

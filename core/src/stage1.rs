@@ -1,7 +1,7 @@
-use crate::error::{Result, SaccadeError};
+use crate::error::Result;
 use regex::Regex;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 pub struct Stage1Generator;
