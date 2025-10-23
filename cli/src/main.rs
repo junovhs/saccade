@@ -1,8 +1,12 @@
+// saccade/cli/src/main.rs
 use anyhow::Result;
 use clap::Parser;
 use saccade_core::config::{Config, GitMode};
 use saccade_core::SaccadePack;
-use std::path::PathBuf;  // Remove Path, we only need PathBuf
+use std::path::PathBuf;
+
+#[cfg(target_os = "windows")]
+use std::path::Path;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -79,10 +83,13 @@ fn main() -> Result<()> {
         config.exclude_patterns = Config::parse_patterns(&patterns)?;
     }
 
+    // ✅ Save before moving `config` so Windows can print a clickable path later
+    let pack_dir = config.pack_dir.clone();
+
     let pack = SaccadePack::new(config);
     pack.generate()?;
 
-    // Output clickable link on Windows for better UX in terminals
+    // ✅ Windows-only clickable file:// link
     #[cfg(target_os = "windows")]
     {
         if let Ok(abs_path) = std::fs::canonicalize(&pack_dir) {
@@ -96,10 +103,10 @@ fn main() -> Result<()> {
 #[cfg(target_os = "windows")]
 fn file_uri(path: &Path) -> String {
     use std::path::Component;
-    
+
     // Build proper file:// URI with percent-encoding
     let mut components = Vec::new();
-    
+
     for component in path.components() {
         match component {
             Component::Prefix(prefix) => {
@@ -118,7 +125,7 @@ fn file_uri(path: &Path) -> String {
             _ => continue,
         }
     }
-    
+
     format!("file:///{}", components.join("/"))
 }
 
@@ -152,7 +159,7 @@ mod tests {
     #[test]
     fn file_uri_strips_verbatim_and_normalizes() {
         let p = PathBuf::from(r"\\?\C:\Users\Alice\ai pack");
-        let got = file_uri(&p);
+        let got = super::file_uri(&p);
         assert_eq!(got, "file:///C:/Users/Alice/ai%20pack");
     }
 
@@ -160,7 +167,7 @@ mod tests {
     #[test]
     fn file_uri_handles_regular_paths() {
         let p = PathBuf::from(r"C:\tmp\ai-pack");
-        let got = file_uri(&p);
+        let got = super::file_uri(&p);
         assert_eq!(got, "file:///C:/tmp/ai-pack");
     }
 
@@ -168,7 +175,7 @@ mod tests {
     #[test]
     fn file_uri_encodes_special_chars() {
         let p = PathBuf::from(r"C:\Documents\Test [1].txt");
-        let got = file_uri(&p);
+        let got = super::file_uri(&p);
         assert_eq!(got, "file:///C:/Documents/Test%20%5B1%5D.txt");
     }
 }
