@@ -107,11 +107,11 @@ const PYTHON_QUERY: &str = r#"
 "#;
 
 /// Skeletonizes a single file's content using Tree-sitter.
-/// Returns a token-light “skeleton”: defs with bodies stripped + salient captures.
+/// Returns a token-light "skeleton": defs with bodies stripped + salient captures.
 pub fn skeletonize_file(content: &str, file_extension: &str) -> Option<String> {
     enum Lang<'a> {
         Js(&'a str),
-        Ts(&'a str),
+        Ts(&'a str, bool), // Add bool flag for TSX vs TS
         Rs(&'a str),
         Py(&'a str),
     }
@@ -121,10 +121,9 @@ pub fn skeletonize_file(content: &str, file_extension: &str) -> Option<String> {
         "js" | "jsx" | "mjs" | "cjs" => {
             Lang::Js(JAVASCRIPT_QUERY)
         }
-        // TypeScript-family
-        "ts" | "tsx" => {
-            Lang::Ts(TYPESCRIPT_QUERY)
-        }
+        // TypeScript-family: use correct grammar per extension
+        "ts" => Lang::Ts(TYPESCRIPT_QUERY, false),  // Use TS grammar
+        "tsx" => Lang::Ts(TYPESCRIPT_QUERY, true),  // Use TSX grammar
         "rs" => Lang::Rs(RUST_QUERY),
         "py" => Lang::Py(PYTHON_QUERY),
         _ => return None,
@@ -135,7 +134,14 @@ pub fn skeletonize_file(content: &str, file_extension: &str) -> Option<String> {
     // Select language + query string
     let (language, query_str) = match lang {
         Lang::Js(q) => (tree_sitter_javascript::language(), q),
-        Lang::Ts(q) => (tree_sitter_typescript::language_tsx(), q),
+        Lang::Ts(q, is_tsx) => {
+            let language = if is_tsx {
+                tree_sitter_typescript::language_tsx()
+            } else {
+                tree_sitter_typescript::language_typescript()
+            };
+            (language, q)
+        },
         Lang::Rs(q) => (tree_sitter_rust::language(), q),
         Lang::Py(q) => (tree_sitter_python::language(), q),
     };

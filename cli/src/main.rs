@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use saccade_core::config::{Config, GitMode};
 use saccade_core::SaccadePack;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;  // Remove Path, we only need PathBuf
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -79,8 +79,6 @@ fn main() -> Result<()> {
         config.exclude_patterns = Config::parse_patterns(&patterns)?;
     }
 
-    let pack_dir = config.pack_dir.clone();
-
     let pack = SaccadePack::new(config);
     pack.generate()?;
 
@@ -97,21 +95,57 @@ fn main() -> Result<()> {
 
 #[cfg(target_os = "windows")]
 fn file_uri(path: &Path) -> String {
-    // Strip verbatim prefixes like \\?\ and normalize to forward slashes,
-    // then percent-encode spaces minimally.
-    let mut s = path.display().to_string();
-    if let Some(rest) = s.strip_prefix(r"\\?\") {
-        s = rest.to_string();
-    } else if let Some(rest) = s.strip_prefix(r"\\.\") {
-        s = rest.to_string();
+    use std::path::Component;
+    
+    // Build proper file:// URI with percent-encoding
+    let mut components = Vec::new();
+    
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => {
+                // Handle drive letters (C:, D:, etc.)
+                let s = prefix.as_os_str().to_string_lossy();
+                // Remove the trailing colon from drive letter
+                components.push(s.trim_end_matches(':').to_string());
+            }
+            Component::RootDir => {
+                // Skip root dir, we'll construct the path with slashes
+                continue;
+            }
+            Component::Normal(part) => {
+                components.push(percent_encode_path_segment(&part.to_string_lossy()));
+            }
+            _ => continue,
+        }
     }
-    s = s.replace('\\', "/").replace(' ', "%20");
-    format!("file:///{}", s)
+    
+    format!("file:///{}", components.join("/"))
+}
+
+#[cfg(target_os = "windows")]
+fn percent_encode_path_segment(segment: &str) -> String {
+    segment
+        .chars()
+        .map(|c| match c {
+            // Characters that need percent-encoding in URIs
+            ' ' => "%20".to_string(),
+            '#' => "%23".to_string(),
+            '%' => "%25".to_string(),
+            '&' => "%26".to_string(),
+            '?' => "%3F".to_string(),
+            '[' => "%5B".to_string(),
+            ']' => "%5D".to_string(),
+            // Safe characters (unreserved per RFC 3986)
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
+            // Everything else gets percent-encoded
+            _ if c.is_ascii() => format!("%{:02X}", c as u8),
+            _ => c.to_string(), // Non-ASCII: keep as-is
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     // Only compiles/runs on Windows — validates the URI normalization.
     #[cfg(target_os = "windows")]
@@ -128,5 +162,13 @@ mod tests {
         let p = PathBuf::from(r"C:\tmp\ai-pack");
         let got = file_uri(&p);
         assert_eq!(got, "file:///C:/tmp/ai-pack");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn file_uri_encodes_special_chars() {
+        let p = PathBuf::from(r"C:\Documents\Test [1].txt");
+        let got = file_uri(&p);
+        assert_eq!(got, "file:///C:/Documents/Test%20%5B1%5D.txt");
     }
 }

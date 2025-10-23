@@ -11,7 +11,7 @@ pub mod stage0;
 pub mod stage1;
 pub mod stage2;
 
-use config::Config;
+use config::{Config, GitMode};
 use enumerate::FileEnumerator;
 use error::{Result, SaccadeError};
 use filter::FileFilter;
@@ -162,11 +162,24 @@ impl SaccadePack {
         eprintln!("  - {} files would be processed", filtered_count);
         eprintln!("  - Output directory: {}", self.config.pack_dir.display());
 
-        let in_git = FileEnumerator::new(self.config.clone()).enumerate().is_ok();
-        if in_git {
-            eprintln!("  - Using Git file enumeration");
-        } else {
-            eprintln!("  - Using find-based file enumeration");
+        // Direct check for git repo instead of relying on enumerate() success
+        let in_git = Command::new("git")
+            .args(&["rev-parse", "--is-inside-work-tree"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        // Show enumeration mode based on config and git availability
+        match self.config.git_mode {
+            GitMode::Yes => eprintln!("  - Using Git file enumeration (forced)"),
+            GitMode::No => eprintln!("  - Using find-based file enumeration (forced)"),
+            GitMode::Auto => {
+                if in_git {
+                    eprintln!("  - Using Git file enumeration (auto-detected)");
+                } else {
+                    eprintln!("  - Using find-based file enumeration (no git repo)");
+                }
+            }
         }
 
         eprintln!("  - Found {} Rust crate(s)", rust_crates.len());

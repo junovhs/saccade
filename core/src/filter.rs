@@ -39,7 +39,8 @@ impl FileFilter {
     }
 
     fn should_keep(&self, path: &Path) -> bool {
-        let path_str = path.to_string_lossy();
+        // Normalize to forward slashes for cross-platform regex matching
+        let path_str = path.to_string_lossy().replace('\\', "/");
 
         // Secrets check
         if self.secret_re.is_match(&path_str) {

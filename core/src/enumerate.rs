@@ -79,6 +79,8 @@ impl FileEnumerator {
 
     fn walk_all_files(&self) -> Result<Vec<PathBuf>> {
         let mut paths = Vec::new();
+        let mut errors = Vec::new();
+        
         let prune_names = [
             ".git",
             "node_modules",
@@ -108,15 +110,27 @@ impl FileEnumerator {
             let entry = match item {
                 Ok(e) => e,
                 Err(e) => {
-                    // Convert walkdir::Error to SaccadeError without failing the whole run
-                    // unless you prefer to bail out on first failure.
-                    return Err(SaccadeError::from(e));
+                    // Collect error but continue walking (graceful degradation)
+                    errors.push(format!("walkdir: {}", e));
+                    continue;
                 }
             };
+            
             if entry.file_type().is_file() {
                 // Store path relative to CWD
                 let p = entry.path().strip_prefix(".").unwrap_or(entry.path());
                 paths.push(p.to_path_buf());
+            }
+        }
+
+        // Report errors if verbose mode is enabled
+        if !errors.is_empty() && self.config.verbose {
+            eprintln!("WARN: Encountered {} errors during file walk:", errors.len());
+            for (i, err) in errors.iter().take(5).enumerate() {
+                eprintln!("  {}. {}", i + 1, err);
+            }
+            if errors.len() > 5 {
+                eprintln!("  ... and {} more", errors.len() - 5);
             }
         }
 
