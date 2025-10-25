@@ -1,3 +1,4 @@
+
 # 👁️ Saccade
 
 **Give your AI eyes — sensing for your codebase.**
@@ -53,11 +54,7 @@ cargo build --release
 
 ### 2) Attach these files to the AI (Round 1)
 
-- `GUIDE.txt` - How to use the pack
-- `PROJECT.txt` - Overview, metadata, languages
-- `STRUCTURE.txt` - Directory tree, file index, size heatmap
-- `APIS.txt` - Public surfaces (Rust/TS/Python/Go)
-- `DEPS.txt` - Dependencies (when present)
+- `PACK.txt` - The single, consolidated pack file.
 
 ### 3) Provide context (or don't - AI will prompt if needed)
 
@@ -68,8 +65,8 @@ Context: Entrypoint is server/src/main.rs; users routes in server/src/routes/use
 Constraints: keep API stable; Rust 1.79; clippy clean; add a failing test first.
 Definition of Done: green tests, same CLI flags, no public API break.
 
-Please use the Saccade pack to map the repo. If you need code, request the smallest 
-file slice with REQUEST_FILE. Only ask for PACK_STAGE2_COMPRESSED.xml if layout/signatures 
+Please use the Saccade pack to map the repo. If you need code, request the smallest
+file slice with REQUEST_FILE. Only ask for PACK_STAGE2_COMPRESSED.xml if layout/signatures
 are unclear.
 ```
 
@@ -82,7 +79,7 @@ REQUEST_FILE:
   range: lines 40-120
 ```
 
-**Escalate only if needed:**  
+**Escalate only if needed:**
 If the AI is unsure about layout/contracts, or the **first attempt fails**, then attach `PACK_STAGE2_COMPRESSED.xml` (signatures-only skeleton).
 
 ---
@@ -91,11 +88,7 @@ If the AI is unsure about layout/contracts, or the **first attempt fails**, then
 
 | File | Purpose | When to Use |
 |------|---------|-------------|
-| **GUIDE.txt** | Protocol, escalation rules, REQUEST_FILE format | Round 1 (always) |
-| **PROJECT.txt** | Repo intent, entry points, metadata | Round 1 (always) |
-| **STRUCTURE.txt** | Depth-limited tree, file index, size heatmap | Round 1 (always) |
-| **APIS.txt** | Public/API surfaces across languages | Round 1 (always) |
-| **DEPS.txt** | Dependency snapshot (cargo tree, npm list, etc.) | Round 1 (if present) |
+| **PACK.txt** | Single-file pack with summaries and interaction guide | Round 1 (always) |
 | **PACK_STAGE2_COMPRESSED.xml** | Signatures-only skeleton | Round 2+ (escalation) |
 
 **Best practice:** Keep Round-1 tiny (~50KB), then send **precise code ranges** as requested. Minimal tokens → maximal reliability.
@@ -224,7 +217,7 @@ This mimics human vision: you don't stare at everything equally — you scan qui
 
 ### Cross-Platform
 - **Linux** ✅ Fully tested
-- **macOS** ✅ Fully tested  
+- **macOS** ✅ Fully tested
 - **Windows** ✅ Fully tested (v0.3.1+)
   - Proper backslash path handling
   - Clickable `file://` URIs with percent-encoding
@@ -269,8 +262,7 @@ cargo watch -x "build --workspace"
 ./target/debug/saccade --verbose
 
 # Benchmark performance
-hyperfine './target/release/saccade'
-```
+hyperfine './target/release/saccade'```
 
 ---
 
@@ -357,22 +349,22 @@ We welcome contributions! Please:
 
 ## FAQ
 
-**Q: How big are the packs?**  
-A: Typically 50-200KB for Round-1 (GUIDE + PROJECT + STRUCTURE + APIS + DEPS). Stage-2 XML adds ~500KB-2MB depending on codebase size.
+**Q: How big are the packs?**
+A: Typically 50-200KB for the main `PACK.txt`. Stage-2 XML adds ~500KB-2MB depending on codebase size.
 
-**Q: Does it work on Windows?**  
+**Q: Does it work on Windows?**
 A: Yes! v0.3.1+ has full Windows support with proper path handling and clickable file:// links.
 
-**Q: Can I use it on private codebases?**  
+**Q: Can I use it on private codebases?**
 A: Yes! Saccade runs entirely locally. Nothing leaves your machine.
 
-**Q: What languages are supported?**  
+**Q: What languages are supported?**
 A: Currently: **Rust**, **TypeScript/JavaScript**, **Python**, **Go**. Tree-sitter makes adding more languages easy.
 
-**Q: How does it compare to uploading my entire codebase?**  
+**Q: How does it compare to uploading my entire codebase?**
 A: Saccade packs are 100-1000x smaller than full repos, contain no secrets, and guide AI to request only what's needed.
 
-**Q: Can I run it in CI/CD?**  
+**Q: Can I run it in CI/CD?**
 A: Yes! Use `--dry-run` to validate, or generate packs for automated analysis.
 
 ---

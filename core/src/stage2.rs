@@ -8,7 +8,7 @@
 // 4. Deterministic output (sorted by path)
 // 5. Progress reporting for large codebases
 
-use crate::error::Result;
+use crate::error::{Result, SaccadeError};
 use crate::parser;
 use rayon::prelude::*;
 use std::fs;
@@ -61,49 +61,48 @@ impl Stage2Generator {
         let results = Mutex::new(Vec::new());
 
         // Process files in parallel
-        files_to_process
-            .par_iter()
-            .for_each(|file_path| {
-                // Check file size first (avoid reading huge files)
-                if let Ok(metadata) = fs::metadata(file_path) {
-                    if metadata.len() > MAX_FILE_SIZE_FOR_PARSING {
-                        skipped_large.fetch_add(1, Ordering::Relaxed);
-                        return;
-                    }
+        files_to_process.par_iter().for_each(|file_path| {
+            // Check file size first (avoid reading huge files)
+            if let Ok(metadata) = fs::metadata(file_path) {
+                if metadata.len() > MAX_FILE_SIZE_FOR_PARSING {
+                    skipped_large.fetch_add(1, Ordering::Relaxed);
+                    return;
                 }
+            }
 
-                let extension = match file_path.extension().and_then(|s| s.to_str()) {
-                    Some(ext) => ext,
-                    None => {
-                        skipped_unsupported.fetch_add(1, Ordering::Relaxed);
-                        return;
-                    }
-                };
+            let extension = match file_path.extension().and_then(|s| s.to_str()) {
+                Some(ext) => ext,
+                None => {
+                    skipped_unsupported.fetch_add(1, Ordering::Relaxed);
+                    return;
+                }
+            };
 
-                // Read and parse file
-                match fs::read_to_string(file_path) {
-                    Ok(content) => {
-                        if let Some(skeleton) = parser::skeletonize_file(&content, extension) {
-                            let count = processed_count.fetch_add(1, Ordering::Relaxed) + 1;
-                            
-                            // Store result
-                            let mut results_guard = results.lock().unwrap();
-                            results_guard.push((file_path.clone(), skeleton));
-                            drop(results_guard);
+            // Read and parse file
+            match fs::read_to_string(file_path) {
+                Ok(content) => {
+                    if let Some(skeleton) = parser::skeletonize_file(&content, extension) {
+                        let count = processed_count.fetch_add(1, Ordering::Relaxed) + 1;
 
-                            // Progress reporting
-                            if self.verbose && count % PROGRESS_REPORT_INTERVAL == 0 {
-                                eprintln!("    Stage-2: Processed {} / {} files", count, total_files);
-                            }
-                        } else {
-                            skipped_unsupported.fetch_add(1, Ordering::Relaxed);
+                        // Store result
+                        let mut results_guard = results.lock().unwrap();
+                        results_guard.push((file_path.clone(), skeleton));
+                        drop(results_guard);
+
+                        // Progress reporting
+                        if self.verbose && count % PROGRESS_REPORT_INTERVAL == 0 {
+                            eprintln!("    Stage-2: Processed {} / {} files", count, total_files);
                         }
-                    }
-                    Err(_) => {
+                    } else {
                         skipped_unsupported.fetch_add(1, Ordering::Relaxed);
                     }
                 }
-            });
+                Err(_) => {
+                    // This could be a binary file that slipped through the filter, or a read error.
+                    skipped_unsupported.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        });
 
         // Get final counts
         let final_count = processed_count.load(Ordering::Relaxed);
@@ -116,12 +115,17 @@ impl Stage2Generator {
                 eprintln!("    Stage-2: Skipped {} files (>5MB)", large_count);
             }
             if unsupported_count > 0 {
-                eprintln!("    Stage-2: Skipped {} files (unsupported/errors)", unsupported_count);
+                eprintln!(
+                    "    Stage-2: Skipped {} files (unsupported/read-errors)",
+                    unsupported_count
+                );
             }
         }
 
         if final_count == 0 {
-            return Ok(Some("No supported files found for Stage 2 skeletonization.".to_string()));
+            return Ok(Some(
+                "No supported files found for Stage 2 skeletonization.".to_string(),
+            ));
         }
 
         // Build final XML output
@@ -135,23 +139,26 @@ impl Stage2Generator {
 
         for (file_path, skeleton) in sorted_results {
             final_output.push_str("  <file path=\"");
-            final_output.push_str(&escape_xml_attr(&file_path.display().to_string()));
+            final_output.push_str(&escape_xml_attr(&file_path.to_string_lossy()));
             final_output.push_str("\">\n");
-            
+
             // Indent the skeleton content
             for line in skeleton.lines() {
                 final_output.push_str("    ");
                 final_output.push_str(&escape_xml_content(line));
                 final_output.push('\n');
             }
-            
+
             final_output.push_str("  </file>\n");
         }
 
         final_output.push_str("</files>\n");
 
         // Write to disk
-        fs::write(output_path, final_output)?;
+        fs::write(output_path, final_output).map_err(|e| SaccadeError::Io {
+            source: e,
+            path: output_path.to_path_buf(),
+        })?;
 
         let msg = format!(
             "Stage-2: Wrote compressed skeleton for {} files to: {}",
@@ -173,9 +180,7 @@ fn escape_xml_attr(s: &str) -> String {
 
 /// Escape XML content (less strict than attributes)
 fn escape_xml_content(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
 #[cfg(test)]
@@ -194,7 +199,7 @@ mod tests {
     #[test]
     fn test_concurrent_processing() {
         let tmp = TempDir::new().unwrap();
-        
+
         // Create test files
         let mut files = Vec::new();
         for i in 0..20 {
@@ -223,7 +228,7 @@ mod tests {
     #[test]
     fn test_file_size_limit() {
         let tmp = TempDir::new().unwrap();
-        
+
         // Create a large file
         let large_file = tmp.path().join("large.rs");
         let mut file = fs::File::create(&large_file).unwrap();
@@ -236,12 +241,12 @@ mod tests {
 
         let files = vec![large_file, normal_file];
         let output = tmp.path().join("output.xml");
-        
+
         let gen = Stage2Generator::new().with_verbose(true);
         let result = gen.generate(&files, &output).unwrap();
 
         assert!(result.is_some());
-        
+
         // Should only have processed 1 file (the small one)
         let content = fs::read_to_string(&output).unwrap();
         assert_eq!(content.matches("<file path=").count(), 1);
@@ -250,7 +255,7 @@ mod tests {
     #[test]
     fn test_deterministic_output() {
         let tmp = TempDir::new().unwrap();
-        
+
         // Create files in random order
         let files = vec!["z.rs", "a.rs", "m.rs"];
         let mut paths = Vec::new();
@@ -265,12 +270,12 @@ mod tests {
         gen.generate(&paths, &output).unwrap();
 
         let content = fs::read_to_string(&output).unwrap();
-        
+
         // Check that files appear in sorted order
         let a_pos = content.find("a.rs").unwrap();
         let m_pos = content.find("m.rs").unwrap();
         let z_pos = content.find("z.rs").unwrap();
-        
+
         assert!(a_pos < m_pos);
         assert!(m_pos < z_pos);
     }

@@ -7,6 +7,7 @@ pub mod filter;
 pub mod guide;
 pub mod manifest;
 pub mod parser;
+pub mod request;
 pub mod stage0;
 pub mod stage1;
 pub mod stage2;
@@ -143,7 +144,10 @@ impl SaccadePack {
         // --- Optional Stage 2 (compressed skeleton/XML) ---
         eprintln!("🔧  [Stage 2] Generating compressed skeleton with internal parser…");
         let stage2_path = self.config.pack_dir.join("PACK_STAGE2_COMPRESSED.xml");
-        match Stage2Generator::new().generate(&filtered_files, &stage2_path) {
+        match Stage2Generator::new()
+            .with_verbose(self.config.verbose)
+            .generate(&filtered_files, &stage2_path)
+        {
             Ok(Some(msg)) => eprintln!("    {}", msg),
             Ok(None) => eprintln!("    Internal parser returned no message."),
             Err(e) => eprintln!("    WARN: Internal parser failed: {}", e),

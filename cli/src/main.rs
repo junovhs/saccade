@@ -158,7 +158,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn file_uri_strips_verbatim_and_normalizes() {
-        let p = PathBuf::from(r"\\?\C:\Users\Alice\ai pack");
+        let p = std::path::PathBuf::from(r"\\?\C:\Users\Alice\ai pack");
         let got = super::file_uri(&p);
         assert_eq!(got, "file:///C:/Users/Alice/ai%20pack");
     }
@@ -166,7 +166,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn file_uri_handles_regular_paths() {
-        let p = PathBuf::from(r"C:\tmp\ai-pack");
+        let p = std::path::PathBuf::from(r"C:\tmp\ai-pack");
         let got = super::file_uri(&p);
         assert_eq!(got, "file:///C:/tmp/ai-pack");
     }
@@ -174,7 +174,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn file_uri_encodes_special_chars() {
-        let p = PathBuf::from(r"C:\Documents\Test [1].txt");
+        let p = std::path::PathBuf::from(r"C:\Documents\Test [1].txt");
         let got = super::file_uri(&p);
         assert_eq!(got, "file:///C:/Documents/Test%20%5B1%5D.txt");
     }

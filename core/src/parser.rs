@@ -184,7 +184,7 @@ pub fn skeletonize_file(content: &str, file_extension: &str) -> Option<String> {
 
         // Prefer def/body pairs → slice signature text only
         if let (Some(def), Some(body)) = (caps.get("def"), caps.get("body")) {
-            let def_id = def.id() as usize;
+            let def_id = def.id();
             if !seen_ids.contains(&def_id) {
                 let start = def.start_byte();
                 let end = body.start_byte();
@@ -203,7 +203,7 @@ pub fn skeletonize_file(content: &str, file_extension: &str) -> Option<String> {
 
         // Otherwise, simple capture (imports/comments/etc.)
         if let Some(cap) = caps.get("capture") {
-            let id = cap.id() as usize;
+            let id = cap.id();
             if !seen_ids.contains(&id) {
                 if let Ok(text) = cap.utf8_text(content.as_bytes()) {
                     let t = text.trim();
@@ -218,7 +218,7 @@ pub fn skeletonize_file(content: &str, file_extension: &str) -> Option<String> {
 
         // Def with no body (e.g., TS overloads)
         if let Some(def) = caps.get("def") {
-            let id = def.id() as usize;
+            let id = def.id();
             if !seen_ids.contains(&id) {
                 if let Ok(text) = def.utf8_text(content.as_bytes()) {
                     let t = text.trim();

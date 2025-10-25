@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::config::{Config, PRUNE_DIRS};
 use crate::error::{Result, SaccadeError};
 use std::path::PathBuf;
 use std::process::Command;
@@ -15,7 +15,7 @@ impl FileEnumerator {
 
     pub fn enumerate(&self) -> Result<Vec<PathBuf>> {
         use crate::config::GitMode;
-        
+
         match self.config.git_mode {
             GitMode::Yes => {
                 // Force Git mode
@@ -80,32 +80,12 @@ impl FileEnumerator {
     fn walk_all_files(&self) -> Result<Vec<PathBuf>> {
         let mut paths = Vec::new();
         let mut errors = Vec::new();
-        
-        let prune_names = [
-            ".git",
-            "node_modules",
-            "dist",
-            "build",
-            "target",
-            "gen",
-            "schemas",
-            "tests",
-            "test",
-            "__tests__",
-            ".venv",
-            "venv",
-            ".tox",
-            ".cache",
-            "coverage",
-            "vendor",
-            "third_party",
-        ];
 
         let walker = WalkDir::new(".").follow_links(false).into_iter();
 
         for item in walker.filter_entry(|e| {
             let name = e.file_name().to_string_lossy();
-            !prune_names.iter().any(|p| name == *p)
+            !PRUNE_DIRS.iter().any(|p| name == *p)
         }) {
             let entry = match item {
                 Ok(e) => e,
@@ -115,7 +95,7 @@ impl FileEnumerator {
                     continue;
                 }
             };
-            
+
             if entry.file_type().is_file() {
                 // Store path relative to CWD
                 let p = entry.path().strip_prefix(".").unwrap_or(entry.path());

@@ -32,7 +32,7 @@ type TestFn = fn(&TestContext, &Path) -> Result<()>;
 
 fn main() {
     if let Err(e) = run() {
-        eprintln!("❌ Fatal error: {}", e);
+        eprintln!("❌ Fatal error: {:#}", e);
         std::process::exit(1);
     }
 }
@@ -71,10 +71,7 @@ fn run() -> Result<()> {
 
 fn parse_config() -> Result<GauntletConfig> {
     let saccade_bin = env::var("SACCADE")
-        .unwrap_or_else(|_| {
-            let home = env::var("HOME").unwrap_or_else(|_| ".".to_string());
-            format!("{}/saccade/saccade", home)
-        })
+        .unwrap_or_else(|_| "target/release/saccade".to_string())
         .into();
 
     let keep_tmp = env::var("KEEP_TMP").unwrap_or_else(|_| "0".to_string()) == "1";
@@ -91,10 +88,9 @@ fn parse_config() -> Result<GauntletConfig> {
 
 fn check_prerequisites(config: &GauntletConfig) -> Result<()> {
     check_command("git")?;
-    check_command("jq")?;
-
+    
     if !config.saccade_bin.exists() {
-        bail!("SACCADE not found at: {}", config.saccade_bin.display());
+        bail!("SACCADE binary not found at: {}\nDid you run `cargo build --release` first?", config.saccade_bin.display());
     }
 
     #[cfg(unix)]
@@ -103,7 +99,10 @@ fn check_prerequisites(config: &GauntletConfig) -> Result<()> {
         let metadata =
             fs::metadata(&config.saccade_bin).context("Failed to read saccade binary metadata")?;
         if metadata.permissions().mode() & 0o111 == 0 {
-            bail!("SACCADE not executable at: {}", config.saccade_bin.display());
+            bail!(
+                "SACCADE not executable at: {}",
+                config.saccade_bin.display()
+            );
         }
     }
 
@@ -125,19 +124,46 @@ fn check_command(cmd: &str) -> Result<()> {
 fn register_tests() -> Vec<(&'static str, TestFn)> {
     vec![
         ("test_01_basic_e2e", test_01_basic_e2e as TestFn),
-        ("test_02_secrets_and_binaries_excluded", test_02_secrets_and_binaries_excluded),
+        (
+            "test_02_secrets_and_binaries_excluded",
+            test_02_secrets_and_binaries_excluded,
+        ),
         ("test_03_prune_in_find_mode", test_03_prune_in_find_mode),
-        ("test_04_git_vs_find_enumeration", test_04_git_vs_find_enumeration),
-        ("test_05_api_rust_pub_and_scoped", test_05_api_rust_pub_and_scoped),
-        ("test_06_api_ts_exports_only_and_pascalcase", test_06_api_ts_exports_only_and_pascalcase),
-        ("test_07_api_python_public_only", test_07_api_python_public_only),
+        (
+            "test_04_git_vs_find_enumeration",
+            test_04_git_vs_find_enumeration,
+        ),
+        (
+            "test_05_api_rust_pub_and_scoped",
+            test_05_api_rust_pub_and_scoped,
+        ),
+        (
+            "test_06_api_ts_exports_only_and_pascalcase",
+            test_06_api_ts_exports_only_and_pascalcase,
+        ),
+        (
+            "test_07_api_python_public_only",
+            test_07_api_python_public_only,
+        ),
         ("test_08_api_go_exported_only", test_08_api_go_exported_only),
-        ("test_09_frontend_dedup_no_duplicates_in_api", test_09_frontend_dedup_no_duplicates_in_api),
-        ("test_10_dry_run_stats_and_no_writes", test_10_dry_run_stats_and_no_writes),
+        (
+            "test_09_frontend_dedup_no_duplicates_in_api",
+            test_09_frontend_dedup_no_duplicates_in_api,
+        ),
+        (
+            "test_10_dry_run_stats_and_no_writes",
+            test_10_dry_run_stats_and_no_writes,
+        ),
         ("test_11_cli_validation_errors", test_11_cli_validation_errors),
-        ("test_12_token_header_uses_div_3_5", test_12_token_header_uses_div_3_5),
-        ("test_13_clickable_link_line_present", test_13_clickable_link_line_present),
-        ("test_14_stage2_repomix_optional", test_14_stage2_repomix_optional),
+        (
+            "test_12_token_header_uses_div_3_5",
+            test_12_token_header_uses_div_3_5,
+        ),
+        (
+            "test_13_clickable_link_line_present",
+            test_13_clickable_link_line_present,
+        ),
+        ("test_14_stage2_optional", test_14_stage2_optional),
     ]
 }
 
@@ -148,6 +174,7 @@ fn execute_tests(ctx: &mut TestContext, tests: &[(&str, TestFn)]) -> Result<()> 
                 if ctx.config.verbose {
                     println!("    skip {} due to filter", name);
                 }
+                ctx.stats.skip += 1;
                 continue;
             }
         }
@@ -163,7 +190,7 @@ fn execute_tests(ctx: &mut TestContext, tests: &[(&str, TestFn)]) -> Result<()> 
                 ctx.stats.pass += 1;
             }
             Err(e) => {
-                eprintln!("❌ {} failed: {}", name, e);
+                eprintln!("❌ {} failed: {:#}", name, e);
                 if ctx.config.keep_tmp {
                     eprintln!("Fixture left at: {}", test_dir.display());
                 }
@@ -197,7 +224,9 @@ fn new_git_repo(dir: &Path) -> Result<()> {
 }
 
 fn run_saccade(ctx: &TestContext, dir: &Path, args: &[&str]) -> Result<String> {
-    let output = Command::new(&ctx.config.saccade_bin)
+    let saccade_abs = fs::canonicalize(&ctx.config.saccade_bin)?;
+    
+    let output = Command::new(&saccade_abs)
         .current_dir(dir)
         .args(args)
         .output()
@@ -211,6 +240,10 @@ fn run_saccade(ctx: &TestContext, dir: &Path, args: &[&str]) -> Result<String> {
 
     if ctx.config.verbose {
         print!("{}", combined);
+    }
+    
+    if !output.status.success() {
+        bail!("Saccade exited with non-zero status:\n{}", combined);
     }
 
     Ok(combined)
@@ -307,8 +340,7 @@ fn assert_line_count(path: &Path, pattern: &str, expected: usize) -> Result<()> 
     let content = fs::read_to_string(path)
         .with_context(|| format!("Failed to read: {}", path.display()))?;
 
-    let re = regex::Regex::new(pattern)
-        .with_context(|| format!("Invalid regex: {}", pattern))?;
+    let re = regex::Regex::new(pattern).with_context(|| format!("Invalid regex: {}", pattern))?;
 
     let count = content.lines().filter(|line| re.is_match(line)).count();
     if count != expected {
@@ -324,8 +356,8 @@ fn assert_line_count(path: &Path, pattern: &str, expected: usize) -> Result<()> 
 }
 
 fn assert_gt_zero(path: &Path) -> Result<()> {
-    let meta = fs::metadata(path)
-        .with_context(|| format!("Failed to stat: {}", path.display()))?;
+    let meta =
+        fs::metadata(path).with_context(|| format!("Failed to stat: {}", path.display()))?;
     if meta.len() == 0 {
         bail!("Expected non-zero size: {}", path.display());
     }
@@ -334,7 +366,7 @@ fn assert_gt_zero(path: &Path) -> Result<()> {
 
 // ========== Tests ==========
 
-fn test_01_basic_e2e(_ctx: &TestContext, dir: &Path) -> Result<()> {
+fn test_01_basic_e2e(ctx: &TestContext, dir: &Path) -> Result<()> {
     new_git_repo(dir)?;
 
     // Rust crate
@@ -357,26 +389,25 @@ edition="2021"
 
     git_add_commit(dir, "init")?;
 
-    run_saccade(_ctx, dir, &["--verbose"])?;
+    run_saccade(ctx, dir, &["--verbose"])?;
 
-    let pack = dir.join("ai-pack");
+    let pack = dir.join("ai-pack/PACK.txt");
     
-    // Check new 5-file structure
-    assert_file(&pack.join("GUIDE.txt"))?;
-    assert_file(&pack.join("PROJECT.txt"))?;
-    assert_file(&pack.join("STRUCTURE.txt"))?;
-    assert_file(&pack.join("APIS.txt"))?;
+    // Check for consolidated sections in single file
+    assert_contains(&pack, "=======PROJECT=======")?;
+    assert_contains(&pack, "=======STRUCTURE=======")?;
+    assert_contains(&pack, "=======APIS=======")?;
     
     // Check consolidated API surfaces
-    assert_contains(&pack.join("APIS.txt"), r"pub\s+fn x\(\)")?;
-    assert_contains(&pack.join("APIS.txt"), r"export const a=1")?;
-    assert_contains(&pack.join("APIS.txt"), "API SURFACE: RUST")?;
-    assert_contains(&pack.join("APIS.txt"), "API SURFACE: TYPESCRIPT")?;
+    assert_contains(&pack, r"pub\s+fn x\(\)")?;
+    assert_contains(&pack, r"export const a=1")?;
+    assert_contains(&pack, "API SURFACE: RUST")?;
+    assert_contains(&pack, "API SURFACE: TYPESCRIPT/JAVASCRIPT")?;
 
     Ok(())
 }
 
-fn test_02_secrets_and_binaries_excluded(_ctx: &TestContext, dir: &Path) -> Result<()> {
+fn test_02_secrets_and_binaries_excluded(ctx: &TestContext, dir: &Path) -> Result<()> {
     new_git_repo(dir)?;
 
     fs::write(dir.join(".env"), "SECRET=1\n")?;
@@ -389,9 +420,9 @@ fn test_02_secrets_and_binaries_excluded(_ctx: &TestContext, dir: &Path) -> Resu
 
     git_add_commit(dir, "init")?;
 
-    run_saccade(_ctx, dir, &["--verbose"])?;
+    run_saccade(ctx, dir, &["--verbose"])?;
 
-    let structure = dir.join("ai-pack/STRUCTURE.txt");
+    let structure = dir.join("ai-pack/PACK.txt");
     assert_not_contains(&structure, r"^\.env$")?;
     assert_not_contains(&structure, r"^private\.pem$")?;
     assert_not_contains(&structure, r"^pic\.png$")?;
@@ -400,7 +431,7 @@ fn test_02_secrets_and_binaries_excluded(_ctx: &TestContext, dir: &Path) -> Resu
     Ok(())
 }
 
-fn test_03_prune_in_find_mode(_ctx: &TestContext, dir: &Path) -> Result<()> {
+fn test_03_prune_in_find_mode(ctx: &TestContext, dir: &Path) -> Result<()> {
     fs::create_dir_all(dir.join("node_modules/a"))?;
     fs::create_dir_all(dir.join("dist"))?;
     fs::create_dir_all(dir.join("src"))?;
@@ -409,17 +440,17 @@ fn test_03_prune_in_find_mode(_ctx: &TestContext, dir: &Path) -> Result<()> {
     fs::write(dir.join("dist/bundle.js"), "bundled")?;
     fs::write(dir.join("src/app.js"), "let x=1")?;
 
-    run_saccade(_ctx, dir, &["--no-git", "--verbose"])?;
+    run_saccade(ctx, dir, &["--no-git", "--verbose"])?;
 
-    let structure = dir.join("ai-pack/STRUCTURE.txt");
-    assert_contains(&structure, r"^src/app\.js$")?;
-    assert_not_contains(&structure, r"^node_modules/")?;
-    assert_not_contains(&structure, r"^dist/")?;
+    let structure = dir.join("ai-pack/PACK.txt");
+    assert_contains(&structure, r"src/app\.js$")?;
+    assert_not_contains(&structure, r"node_modules/")?;
+    assert_not_contains(&structure, r"dist/")?;
 
     Ok(())
 }
 
-fn test_04_git_vs_find_enumeration(_ctx: &TestContext, dir: &Path) -> Result<()> {
+fn test_04_git_vs_find_enumeration(ctx: &TestContext, dir: &Path) -> Result<()> {
     new_git_repo(dir)?;
 
     fs::write(dir.join("ignored.md"), "ignored.md")?;
@@ -430,19 +461,19 @@ fn test_04_git_vs_find_enumeration(_ctx: &TestContext, dir: &Path) -> Result<()>
     run_cmd(dir, "git", &["commit", "-qm", "add keep"])?;
 
     // Git mode -> ignored.md excluded
-    run_saccade(_ctx, dir, &["--verbose"])?;
-    let structure = dir.join("ai-pack/STRUCTURE.txt");
-    assert_contains(&structure, r"^keep\.md$")?;
-    assert_not_contains(&structure, r"^ignored\.md$")?;
+    run_saccade(ctx, dir, &["--verbose"])?;
+    let pack = dir.join("ai-pack/PACK.txt");
+    assert_contains(&pack, r"keep\.md$")?;
+    assert_not_contains(&pack, r"ignored\.md$")?;
 
     // Force find -> ignored.md included
-    run_saccade(_ctx, dir, &["--no-git", "--verbose"])?;
-    assert_contains(&structure, r"^ignored\.md$")?;
+    run_saccade(ctx, dir, &["--no-git", "--verbose"])?;
+    assert_contains(&pack, r"ignored\.md$")?;
 
     Ok(())
 }
 
-fn test_05_api_rust_pub_and_scoped(_ctx: &TestContext, dir: &Path) -> Result<()> {
+fn test_05_api_rust_pub_and_scoped(ctx: &TestContext, dir: &Path) -> Result<()> {
     let rc_dir = dir.join("rc");
     fs::create_dir_all(rc_dir.join("src"))?;
 
@@ -464,9 +495,9 @@ mod inner { pub use super::Foo; }
 "#,
     )?;
 
-    run_saccade(_ctx, dir, &["--no-git", "--verbose"])?;
+    run_saccade(ctx, dir, &["--no-git", "--verbose"])?;
 
-    let apis = dir.join("ai-pack/APIS.txt");
+    let apis = dir.join("ai-pack/PACK.txt");
     assert_contains(&apis, r"pub\(crate\)\s+struct Foo")?;
     assert_contains(&apis, r"pub\s+fn bar")?;
     assert_contains(&apis, r"pub\(super\)\s+trait T")?;
@@ -475,7 +506,7 @@ mod inner { pub use super::Foo; }
     Ok(())
 }
 
-fn test_06_api_ts_exports_only_and_pascalcase(_ctx: &TestContext, dir: &Path) -> Result<()> {
+fn test_06_api_ts_exports_only_and_pascalcase(ctx: &TestContext, dir: &Path) -> Result<()> {
     let app_dir = dir.join("app");
     fs::create_dir_all(&app_dir)?;
 
@@ -490,9 +521,9 @@ class Abc {}
 "#,
     )?;
 
-    run_saccade(_ctx, dir, &["--no-git", "--verbose"])?;
+    run_saccade(ctx, dir, &["--no-git", "--verbose"])?;
 
-    let apis = dir.join("ai-pack/APIS.txt");
+    let apis = dir.join("ai-pack/PACK.txt");
     assert_contains(&apis, "export const X")?;
     assert_not_contains(&apis, "const y")?;
     assert_contains(&apis, "export default function alpha")?;
@@ -502,7 +533,7 @@ class Abc {}
     Ok(())
 }
 
-fn test_07_api_python_public_only(_ctx: &TestContext, dir: &Path) -> Result<()> {
+fn test_07_api_python_public_only(ctx: &TestContext, dir: &Path) -> Result<()> {
     fs::write(
         dir.join("a.py"),
         r#"def public_fn(): pass
@@ -512,9 +543,9 @@ class _Hidden: pass
 "#,
     )?;
 
-    run_saccade(_ctx, dir, &["--no-git", "--verbose"])?;
+    run_saccade(ctx, dir, &["--no-git", "--verbose"])?;
 
-    let apis = dir.join("ai-pack/APIS.txt");
+    let apis = dir.join("ai-pack/PACK.txt");
     assert_contains(&apis, "def public_fn")?;
     assert_contains(&apis, "class Public")?;
     assert_not_contains(&apis, "def _private")?;
@@ -523,7 +554,7 @@ class _Hidden: pass
     Ok(())
 }
 
-fn test_08_api_go_exported_only(_ctx: &TestContext, dir: &Path) -> Result<()> {
+fn test_08_api_go_exported_only(ctx: &TestContext, dir: &Path) -> Result<()> {
     fs::write(
         dir.join("m.go"),
         r#"package main
@@ -532,37 +563,40 @@ func unexported() {}
 "#,
     )?;
 
-    run_saccade(_ctx, dir, &["--no-git", "--verbose"])?;
+    run_saccade(ctx, dir, &["--no-git", "--verbose"])?;
 
-    let apis = dir.join("ai-pack/APIS.txt");
+    let apis = dir.join("ai-pack/PACK.txt");
     assert_contains(&apis, r"func\s+Exported\(")?;
     assert_not_contains(&apis, "unexported")?;
 
     Ok(())
 }
 
-fn test_09_frontend_dedup_no_duplicates_in_api(_ctx: &TestContext, dir: &Path) -> Result<()> {
+fn test_09_frontend_dedup_no_duplicates_in_api(ctx: &TestContext, dir: &Path) -> Result<()> {
     fs::create_dir_all(dir.join("packages/app"))?;
     fs::create_dir_all(dir.join("frontend"))?;
 
-    fs::write(dir.join("packages/app/package.json"), r#"{"name":"app"}"#)?;
+    fs::write(
+        dir.join("packages/app/package.json"),
+        r#"{"name":"app"}"#,
+    )?;
     fs::write(dir.join("frontend/package.json"), r#"{"name":"fe"}"#)?;
     fs::write(dir.join("frontend/k.ts"), "export const K=1")?;
     fs::write(dir.join("packages/app/k2.ts"), "export const K2=2")?;
 
-    run_saccade(_ctx, dir, &["--no-git", "--verbose"])?;
+    run_saccade(ctx, dir, &["--no-git", "--verbose"])?;
 
-    let apis = dir.join("ai-pack/APIS.txt");
+    let apis = dir.join("ai-pack/PACK.txt");
     assert_line_count(&apis, "export const K=1", 1)?;
     assert_line_count(&apis, "export const K2=2", 1)?;
 
     Ok(())
 }
 
-fn test_10_dry_run_stats_and_no_writes(_ctx: &TestContext, dir: &Path) -> Result<()> {
+fn test_10_dry_run_stats_and_no_writes(ctx: &TestContext, dir: &Path) -> Result<()> {
     fs::write(dir.join("a.js"), "console.log(1)")?;
 
-    let output = run_saccade(_ctx, dir, &["--dry-run"])?;
+    let output = run_saccade(ctx, dir, &["--dry-run"])?;
 
     if !output.contains("Would generate the following artifacts") {
         bail!("dry-run header missing");
@@ -575,67 +609,61 @@ fn test_10_dry_run_stats_and_no_writes(_ctx: &TestContext, dir: &Path) -> Result
     Ok(())
 }
 
-fn test_11_cli_validation_errors(_ctx: &TestContext, dir: &Path) -> Result<()> {
-    let result = Command::new(&_ctx.config.saccade_bin)
+fn test_11_cli_validation_errors(ctx: &TestContext, dir: &Path) -> Result<()> {
+    let saccade_abs = fs::canonicalize(&ctx.config.saccade_bin)?;
+    let result = Command::new(&saccade_abs)
         .current_dir(dir)
-        .arg("--max-depth")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+        .arg("--max-depth=99")
+        .output();
 
     match result {
-        Ok(status) if !status.success() => Ok(()),
-        _ => bail!("expected error for --max-depth without value"),
+        Ok(output) if !output.status.success() => Ok(()),
+        _ => bail!("expected error for --max-depth=99"),
     }
 }
 
-fn test_12_token_header_uses_div_3_5(_ctx: &TestContext, dir: &Path) -> Result<()> {
+fn test_12_token_header_uses_div_3_5(ctx: &TestContext, dir: &Path) -> Result<()> {
     fs::write(dir.join("t.txt"), "a")?;
 
-    run_saccade(_ctx, dir, &["--no-git"])?;
+    run_saccade(ctx, dir, &["--no-git"])?;
 
-    assert_contains(&dir.join("ai-pack/STRUCTURE.txt"), r"bytes.*3\.5")?;
+    assert_contains(&dir.join("ai-pack/PACK.txt"), r"bytes → ~tokens via /3.5")?;
 
     Ok(())
 }
 
-fn test_13_clickable_link_line_present(_ctx: &TestContext, dir: &Path) -> Result<()> {
-    let is_windows = cfg!(target_os = "windows")
-        || env::var("WT_SESSION").is_ok()
-        || env::var("OSTYPE").map_or(false, |s| s.starts_with("msys") || s.starts_with("win32"));
-
-    if !is_windows {
-        // Skip on non-Windows
+fn test_13_clickable_link_line_present(ctx: &TestContext, dir: &Path) -> Result<()> {
+    if !cfg!(target_os = "windows") {
+        println!("    skip on non-Windows");
         return Ok(());
     }
 
     fs::write(dir.join("a.txt"), "x")?;
-    run_saccade(_ctx, dir, &["--no-git", "--verbose"])?;
+    let log = run_saccade(ctx, dir, &["--no-git", "--verbose"])?;
 
-    assert_contains(&dir.join("run.log"), r"Click:\s+file://")?;
+    assert!(log.contains("Click: file://"), "Clickable link not found in log");
 
     Ok(())
 }
 
-fn test_14_stage2_repomix_optional(_ctx: &TestContext, dir: &Path) -> Result<()> {
-    fs::write(dir.join("a.txt"), "x")?;
+fn test_14_stage2_optional(ctx: &TestContext, dir: &Path) -> Result<()> {
+    // Create a file that is parsable
+    fs::write(dir.join("a.rs"), "pub fn test() {}")?;
 
-    let has_repomix = Command::new("repomix")
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok();
-
-    run_saccade(_ctx, dir, &["--no-git"])?;
+    run_saccade(ctx, dir, &["--no-git"])?;
 
     let stage2 = dir.join("ai-pack/PACK_STAGE2_COMPRESSED.xml");
 
-    if has_repomix {
-        assert_file(&stage2)?;
-        assert_gt_zero(&stage2)?;
-    }
-    // If repomix is absent, just verify no crash (file may or may not exist)
+    assert_file(&stage2)?;
+    assert_gt_zero(&stage2)?;
+    
+    // Create a file that is not parsable
+    fs::write(dir.join("b.txt"), "not parsable content")?;
+    
+    run_saccade(ctx, dir, &["--no-git"])?;
+
+    // Stage 2 should still exist from the .rs file, and the run should not crash.
+    assert_file(&stage2)?;
 
     Ok(())
 }

@@ -23,20 +23,17 @@ impl Stage0Generator {
         // Collect only directory prefixes (not filenames)
         let mut dirs = BTreeSet::new();
         for path in files {
-            let comps: Vec<_> = path.components().collect();
-            // Up to (max_depth - 1) components, but stop before the final filename
-            let max = self.config.max_depth.saturating_sub(1);
-            let limit = comps.len().saturating_sub(1).min(max);
-            if limit == 0 {
-                continue;
-            }
-            let mut current = String::new();
-            for i in 0..limit {
-                if !current.is_empty() {
-                    current.push('/');
+            if let Some(parent) = path.parent() {
+                if parent.as_os_str().is_empty() {
+                    continue;
                 }
-                current.push_str(&comps[i].as_os_str().to_string_lossy());
-                dirs.insert(current.clone());
+                let comps: Vec<_> = parent.components().collect();
+                let limit = comps.len().min(self.config.max_depth);
+
+                for i in 1..=limit {
+                    let dir_path: std::path::PathBuf = comps[..i].iter().collect();
+                    dirs.insert(dir_path.to_string_lossy().replace('\\', "/"));
+                }
             }
         }
 
@@ -56,13 +53,7 @@ impl Stage0Generator {
 
         let mut sorted: Vec<String> = files
             .iter()
-            .map(|p| {
-                let mut s = p.display().to_string();
-                if s.starts_with("./") {
-                    s = s.trim_start_matches("./").to_string();
-                }
-                s
-            })
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
             .collect();
         sorted.sort();
         sorted.dedup();
@@ -82,7 +73,7 @@ impl Stage0Generator {
         for path in files {
             if let Ok(metadata) = fs::metadata(path) {
                 let bytes = metadata.len();
-                file_sizes.push((bytes, path.display().to_string()));
+                file_sizes.push((bytes, path.to_string_lossy().replace('\\', "/")));
             }
         }
 

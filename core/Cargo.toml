@@ -21,6 +21,7 @@ tree-sitter-typescript = "0.21"
 tree-sitter-rust = "0.21"
 tree-sitter-python = "0.21"
 rayon = "1"
+glob = "0.3"
 
 [dev-dependencies]
 tempfile = "3"
