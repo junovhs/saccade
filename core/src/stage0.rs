@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::error::Result;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 
 pub struct Stage0Generator {
@@ -12,8 +12,43 @@ impl Stage0Generator {
         Self { config }
     }
 
-    pub fn generate_combined_structure(&self, files: &[std::path::PathBuf]) -> Result<String> {
+    pub fn generate_combined_structure(
+        &self,
+        files: &[std::path::PathBuf],
+        detected_systems: &[crate::detection::BuildSystemType],
+    ) -> Result<String> {
         let mut output = String::new();
+
+        // --- Find project roots by locating manifest files ---
+        let mut project_roots = HashMap::new();
+        for path in files {
+            let file_name = path.file_name().and_then(|n| n.to_str());
+            if let Some(name) = file_name {
+                let system_type = match name {
+                    "Cargo.toml" => Some(crate::detection::BuildSystemType::Rust),
+                    "package.json" => Some(crate::detection::BuildSystemType::Node),
+                    "go.mod" => Some(crate::detection::BuildSystemType::Go),
+                    "requirements.txt" | "pyproject.toml" | "Pipfile" => {
+                        Some(crate::detection::BuildSystemType::Python)
+                    }
+                    "CMakeLists.txt" => Some(crate::detection::BuildSystemType::CMake),
+                    _ => None,
+                };
+
+                if let (Some(st), Some(parent)) = (system_type, path.parent()) {
+                    if detected_systems.contains(&st) {
+                        let parent_path = parent.to_string_lossy().replace('\\', "/");
+                        let key = if parent_path.is_empty() {
+                            ".".to_string()
+                        } else {
+                            parent_path
+                        };
+                        project_roots.insert(key, st);
+                    }
+                }
+            }
+        }
+        // --- End project root detection ---
 
         // Section 1: Directory Tree
         output.push_str("========================================\n");
@@ -22,10 +57,11 @@ impl Stage0Generator {
 
         // Collect only directory prefixes (not filenames)
         let mut dirs = BTreeSet::new();
+        dirs.insert(".".to_string()); // Always include the root
         for path in files {
             if let Some(parent) = path.parent() {
                 if parent.as_os_str().is_empty() {
-                    continue;
+                    continue; // Handled by the explicit "." insert
                 }
                 let comps: Vec<_> = parent.components().collect();
                 let limit = comps.len().min(self.config.max_depth);
@@ -38,12 +74,16 @@ impl Stage0Generator {
         }
 
         output.push_str(&format!(
-            "Directories (depth <= {}):\n\n",
+            "Directories (depth <= {}, with detected project roots):\n\n",
             self.config.max_depth
         ));
         for dir in &dirs {
-            output.push_str(dir);
-            output.push('\n');
+            if let Some(system_type) = project_roots.get(dir.as_str()) {
+                output.push_str(&format!("{}  <-- [{} Project]\n", dir, system_type));
+            } else {
+                output.push_str(dir);
+                output.push('\n');
+            }
         }
 
         // Section 2: File Index

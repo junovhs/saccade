@@ -1,11 +1,13 @@
 // saccade/core/src/stage1.rs
 
+use crate::detection::BuildSystemType;
 use crate::error::Result;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Output};
+use tree_sitter::{Parser, Query};
 
 /// === Dependency output budgets (visible, enforceable) =====================
 const DEPS_SECTION_MAX_LINES: usize = 300;
@@ -13,12 +15,17 @@ const DEPS_SECTION_MAX_BYTES: usize = 128 * 1024; // 128 KiB
 const DEPS_JOINER: &str = "\n\n----------------------------------------\n";
 const INCLUDE_CARGO_METADATA: bool = false; // OFF by default (too noisy)
 
-// Pre-compiled regex for scrubbing sensitive info.
-// Using Lazy from once_cell avoids panics from unwrap() on invalid patterns.
 static EMAIL_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}").unwrap());
 static REGISTRY_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"index\.crates\.io-[^\s/\\]+[\\/]").unwrap());
+
+// Query to find `find_package(PackageName ...)` calls in CMake.
+const CMAKE_DEPS_QUERY: &str = r#"
+(command_invocation
+  name: (identifier) @cmd_name
+  arguments: (unquoted_argument) @pkg_name)
+"#;
 
 pub struct Stage1Generator;
 
@@ -28,7 +35,7 @@ impl Stage1Generator {
     }
 
     // ---------------------------------------------------------------------
-    // API SURFACE (unchanged behavior)
+    // API SURFACE
     // ---------------------------------------------------------------------
 
     pub fn generate_combined_apis(
@@ -124,26 +131,32 @@ impl Stage1Generator {
     }
 
     // ---------------------------------------------------------------------
-    // DEPENDENCIES (compact, multi-ecosystem, redacted, bounded)
+    // DEPENDENCIES (Dynamically Configured)
     // ---------------------------------------------------------------------
 
-    pub fn generate_all_deps(&self) -> Result<String> {
+    /// Build a consolidated DEPS section, dynamically configured by the Layer 2 detector.
+    pub fn generate_all_deps(&self, detected_systems: &[BuildSystemType]) -> Result<String> {
         let mut sections: Vec<String> = Vec::new();
-        if Path::new("Cargo.toml").exists() {
+
+        // --- DCA in action: Only run tools for detected systems ---
+        if detected_systems.contains(&BuildSystemType::Rust) {
             sections.push(self.deps_rust());
         }
-        if Path::new("package.json").exists() {
+        if detected_systems.contains(&BuildSystemType::Node) {
             sections.push(self.deps_node());
         }
-        if ["pyproject.toml", "requirements.txt", "Pipfile", "poetry.lock"]
-            .iter()
-            .any(|f| Path::new(f).exists())
-        {
+        if detected_systems.contains(&BuildSystemType::Python) {
             sections.push(self.deps_python());
         }
-        if Path::new("go.mod").exists() {
+        if detected_systems.contains(&BuildSystemType::Go) {
             sections.push(self.deps_go());
         }
+        if detected_systems.contains(&BuildSystemType::CMake) {
+            // New logic to handle CMake dependencies via parsing.
+            sections.push(self.deps_cmake(detected_systems)?);
+        }
+        // --- End DCA section ---
+
         if sections.is_empty() {
             return Ok(String::new());
         }
@@ -176,22 +189,34 @@ impl Stage1Generator {
 
     fn deps_node(&self) -> String {
         let mut parts: Vec<String> = vec!["NODE (npm/pnpm/yarn)".to_string()];
-        let tool = if tool_exists("npm") { Some("npm") } else if tool_exists("pnpm") { Some("pnpm") } else if tool_exists("yarn") { Some("yarn") } else { None };
-        if let Some(tool_name) = tool {
-            parts.push(format!("Tool: {}", tool_name));
-            let (cmd, args) = match tool_name {
-                "pnpm" => ("pnpm", vec!["list", "--depth", "2"]),
-                "yarn" => ("yarn", vec!["list", "--depth=2"]),
-                _ => ("npm", vec!["ls", "--depth", "2"]),
-            };
-            if let Some(s) = run_collect_any_status(cmd, &args) {
-                parts.push(format!("{} {}\n{}\n", cmd, args.join(" "), clamp_and_scrub(&s, &format!("{} {}", cmd, args.join(" ")))));
+        if tool_exists("npm") {
+            parts.push("Tool: npm".to_string());
+            if let Some(s) = run_collect_any_status("npm", &["ls", "--depth", "2"]) {
+                parts.push(format!("npm ls --depth 2\n{}\n", clamp_and_scrub(&s, "npm ls --depth 2")));
             } else {
-                parts.push(warn_tool_failed(&format!("{} {}", cmd, args.join(" "))));
+                parts.push(warn_tool_failed("npm ls --depth 2"));
             }
-        } else {
-            parts.push(warn_tool_missing("npm|pnpm|yarn"));
+            return parts.join("\n");
         }
+        if tool_exists("pnpm") {
+            parts.push("Tool: pnpm".to_string());
+            if let Some(s) = run_collect_any_status("pnpm", &["list", "--depth", "2"]) {
+                parts.push(format!("pnpm list --depth 2\n{}\n", clamp_and_scrub(&s, "pnpm list --depth 2")));
+            } else {
+                parts.push(warn_tool_failed("pnpm list --depth 2"));
+            }
+            return parts.join("\n");
+        }
+        if tool_exists("yarn") {
+            parts.push("Tool: yarn".to_string());
+            if let Some(s) = run_collect_any_status("yarn", &["list", "--depth=2"]) {
+                parts.push(format!("yarn list --depth=2\n{}\n", clamp_and_scrub(&s, "yarn list --depth=2")));
+            } else {
+                parts.push(warn_tool_failed("yarn list --depth=2"));
+            }
+            return parts.join("\n");
+        }
+        parts.push(warn_tool_missing("npm|pnpm|yarn"));
         parts.join("\n")
     }
 
@@ -208,13 +233,15 @@ impl Stage1Generator {
             parts.push(clamp_and_scrub(&s, "poetry.lock"));
             return parts.join("\n");
         }
+        let mut appended = false;
         for name in &["requirements.txt", "requirements-dev.txt"] {
             if let Ok(s) = fs::read_to_string(name) {
                 parts.push(format!("({} present; head)", name));
                 parts.push(clamp_and_scrub(&s, name));
-                return parts.join("\n");
+                appended = true;
             }
         }
+        if appended { return parts.join("\n"); }
         if tool_exists("pip") {
             if let Some(s) = run_collect_any_status("pip", &["list"]) {
                 parts.push(format!("pip list\n{}\n", clamp_and_scrub(&s, "pip list")));
@@ -241,6 +268,70 @@ impl Stage1Generator {
         }
         parts.join("\n")
     }
+
+    /// NEW: Parse CMakeLists.txt for `find_package` dependencies.
+    fn deps_cmake(&self, _detected_systems: &[BuildSystemType]) -> Result<String> {
+        let mut parts: Vec<String> = vec!["C++ (CMake)".to_string()];
+        let mut found_any = false;
+
+        let cmake_files: Vec<_> = walkdir::WalkDir::new(".")
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                let name = e.file_name().to_string_lossy();
+                name == "CMakeLists.txt" || name.ends_with(".cmake")
+            })
+            .collect();
+
+        for entry in cmake_files {
+            let path = entry.path();
+            if let Ok(content) = fs::read_to_string(path) {
+                if let Some(deps) = self.extract_cmake_deps(&content) {
+                    parts.push(format!(
+                        "Dependencies from: {}\n{}",
+                        path.display(),
+                        deps
+                    ));
+                    found_any = true;
+                }
+            }
+        }
+
+        if !found_any {
+            parts.push("(No `find_package` dependencies found in CMake files)".to_string());
+        }
+
+        Ok(parts.join("\n"))
+    }
+    
+    /// Helper to extract dependencies from a single CMake file's content.
+    fn extract_cmake_deps(&self, content: &str) -> Option<String> {
+        let mut parser = Parser::new();
+        if parser.set_language(&tree_sitter_cmake::language()).is_err() {
+            return None;
+        }
+        let tree = parser.parse(content, None)?;
+        let query = Query::new(&tree_sitter_cmake::language(), CMAKE_DEPS_QUERY).ok()?;
+        
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let matches = cursor.matches(&query, tree.root_node(), content.as_bytes());
+        
+        let mut packages = Vec::new();
+        for m in matches {
+            let cmd_name = m.captures[0].node.utf8_text(content.as_bytes()).ok()?;
+            if cmd_name.to_lowercase() == "find_package" {
+                let pkg_name = m.captures[1].node.utf8_text(content.as_bytes()).ok()?;
+                packages.push(format!("- {}", pkg_name.trim()));
+            }
+        }
+
+        if packages.is_empty() {
+            None
+        } else {
+            Some(packages.join("\n"))
+        }
+    }
+
 
     // ---------------------------------------------------------------------
     // API extraction helpers

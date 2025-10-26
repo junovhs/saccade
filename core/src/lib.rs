@@ -1,6 +1,7 @@
 // In saccade/core/src/lib.rs
 
 pub mod config;
+pub mod detection;
 pub mod enumerate;
 pub mod error;
 pub mod filter;
@@ -13,7 +14,8 @@ pub mod stage0;
 pub mod stage1;
 pub mod stage2;
 
-use config::Config; // <--- MODIFIED: Removed unused 'GitMode'
+use config::Config;
+use detection::Detector;
 use enumerate::FileEnumerator;
 use error::{Result, SaccadeError};
 use filter::FileFilter;
@@ -48,6 +50,14 @@ impl SaccadePack {
     pub fn generate(&self) -> Result<()> {
         self.config.validate()?;
         let (raw_count, filtered_files) = self.enumerate_and_filter_files()?;
+
+        // --- DCA: Layer 2 Detection acts as the Environmental Signal ---
+        eprintln!("🔬  [Layer 2] Performing structural validation (AST analysis)...");
+        let detector = Detector::new();
+        let detected_systems = detector.detect_build_systems(&filtered_files)?;
+        eprintln!("    • Detected build systems: [{}]", detected_systems.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(", "));
+        // --- End DCA Step ---
+
         let stage1 = Stage1Generator::new();
         let rust_crates = stage1.find_rust_crates()?;
         let frontend_dirs = stage1.find_frontend_dirs()?;
@@ -57,16 +67,12 @@ impl SaccadePack {
         }
 
         self.prepare_output_directory()?;
-        let pack_content = self.generate_pack_content(raw_count, &filtered_files, &rust_crates, &frontend_dirs)?;
+        let pack_content = self.generate_pack_content(raw_count, &filtered_files, &rust_crates, &frontend_dirs, &detected_systems)?;
         self.write_pack_file(&pack_content, &filtered_files)?;
-
-        // --- MODIFIED: Handle Stage 2 failure immediately and loudly ---
         let stage2_result = self.generate_stage2(&filtered_files);
         if let Err(e) = &stage2_result {
             eprintln!("    WARN: Internal parser failed: {}", e);
         }
-        // --- End Modification ---
-
         self.print_summary(&filtered_files, !pack_content.deps.is_empty(), &stage2_result)?;
         Ok(())
     }
@@ -75,8 +81,7 @@ impl SaccadePack {
         eprintln!("📂  Enumerating files…");
         let enumerator = FileEnumerator::new(self.config.clone());
         let raw_files = enumerator.enumerate()?;
-        let raw_count = raw_files.len();
-        eprintln!("    • Found {} files (raw)", raw_count);
+        eprintln!("    • Found {} files (raw)", raw_files.len());
 
         eprintln!("🔬  [Layer 1] Applying heuristic filters (entropy, content patterns)…");
         let heuristic_files = HeuristicFilter::new().filter(raw_files);
@@ -86,7 +91,7 @@ impl SaccadePack {
         let filter = FileFilter::new(self.config.clone())?;
         let filtered_files = filter.filter(heuristic_files);
         eprintln!("    • Kept {} files after final filtering", filtered_files.len());
-        Ok((raw_count, filtered_files))
+        Ok((filtered_files.len(), filtered_files))
     }
 
     fn prepare_output_directory(&self) -> Result<()> {
@@ -96,14 +101,15 @@ impl SaccadePack {
         })
     }
 
-    fn generate_pack_content(&self, raw_count: usize, files: &[PathBuf], rust_crates: &[PathBuf], frontend_dirs: &[PathBuf]) -> Result<PackContent> {
+    fn generate_pack_content(&self, raw_count: usize, files: &[PathBuf], rust_crates: &[PathBuf], frontend_dirs: &[PathBuf], detected_systems: &[detection::BuildSystemType]) -> Result<PackContent> {
         eprintln!("📦  Generating consolidated pack content…");
-        let info_ctx = ProjectInfoContext { raw_count, filtered_count: files.len(), pack_dir: &self.config.pack_dir, in_git: is_in_git_repo(), files };
+        let info_ctx = ProjectInfoContext { raw_count, filtered_count: files.len(), pack_dir: &self.config.pack_dir, in_git: is_in_git_repo(), files, detected_systems };
+        let stage1 = Stage1Generator::new();
         Ok(PackContent {
             project: ManifestGenerator::new(self.config.clone()).generate_project_info(&info_ctx)?,
-            structure: Stage0Generator::new(self.config.clone()).generate_combined_structure(files)?,
-            apis: Stage1Generator::new().generate_combined_apis(rust_crates, frontend_dirs, files)?,
-            deps: Stage1Generator::new().generate_all_deps()?,
+            structure: Stage0Generator::new(self.config.clone()).generate_combined_structure(files, detected_systems)?,
+            apis: stage1.generate_combined_apis(rust_crates, frontend_dirs, files)?,
+            deps: stage1.generate_all_deps(detected_systems)?,
             guide: GuideGenerator::new().generate_guide()?,
         })
     }
@@ -154,12 +160,8 @@ impl SaccadePack {
         eprintln!("==> [Dry Run] Would generate the following artifacts:");
         eprintln!("  - {} files would be processed", filtered_count);
         eprintln!("  - Output directory: {}", self.config.pack_dir.display());
-        
-        // --- MODIFIED: Use the variables to prevent warnings ---
         eprintln!("  - Found {} Rust crate(s)", rust_crates.len());
         eprintln!("  - Found {} frontend dir(s)", frontend_dirs.len());
-        // --- End Modification ---
-
         eprintln!("  - Would produce: ai-pack/{} (single file) + PACK_STAGE2_COMPRESSED.xml", PACK_FILE_NAME);
         Ok(())
     }
