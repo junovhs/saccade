@@ -9,24 +9,25 @@ pub struct ManifestGenerator {
     config: Config,
 }
 
+/// Context for generating the PROJECT section.
+pub struct ProjectInfoContext<'a> {
+    pub raw_count: usize,
+    pub filtered_count: usize,
+    pub pack_dir: &'a Path,
+    pub in_git: bool,
+    pub files: &'a [PathBuf],
+}
+
 impl ManifestGenerator {
     pub fn new(config: Config) -> Self {
         Self { config }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn generate_project_info(
-        &self,
-        raw_count: usize,
-        filtered_count: usize,
-        pack_dir: &Path,
-        in_git: bool,
-        files: &[PathBuf],
-    ) -> Result<String> {
+    pub fn generate_project_info(&self, ctx: &ProjectInfoContext) -> Result<String> {
         let now: DateTime<Local> = Local::now();
 
         // Optional git details
-        let git_commit = if in_git {
+        let git_commit = if ctx.in_git {
             Command::new("git")
                 .args(&["rev-parse", "--short", "HEAD"])
                 .output()
@@ -43,10 +44,9 @@ impl ManifestGenerator {
         };
 
         let stage0 = Stage0Generator::new(self.config.clone());
-        let lang_snapshot = stage0.generate_languages(files)?;
+        let lang_snapshot = stage0.generate_languages(ctx.files)?;
 
         // What’s in the pack: keep this aligned with GUIDE + actual outputs
-        // We don’t know yet if DEPS.txt/Stage2 will be produced here, so mark them optional.
         let whats_in_pack = r#"1. GUIDE.txt               - How to use the pack
 2. PROJECT.txt             - Overview, metadata
 3. STRUCTURE.txt           - Directory tree, file index, token heatmap
@@ -63,18 +63,18 @@ impl ManifestGenerator {
         out.push_str(&format!(
             "Generated: {}\nOutput dir: {}\n\n",
             now.format("%Y-%m-%d %H:%M:%S %Z"),
-            pack_dir.display()
+            ctx.pack_dir.display()
         ));
 
         out.push_str("STATS\n------\n");
         out.push_str(&format!(
             "- files.raw: {}\n- files.kept: {}\n- code_only: {}\n",
-            raw_count, filtered_count, self.config.code_only
+            ctx.raw_count, ctx.filtered_count, self.config.code_only
         ));
         out.push_str(&format!("- max_depth: {}\n\n", self.config.max_depth));
 
         out.push_str("TOOLS\n------\n");
-        out.push_str(&format!("- tools.git: {}\n", in_git));
+        out.push_str(&format!("- tools.git: {}\n", ctx.in_git));
         if let Some(commit) = git_commit {
             out.push_str(&format!("- git.commit: {}\n", commit));
         }

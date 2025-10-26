@@ -1,3 +1,5 @@
+// saccade/core/src/error.rs
+
 use std::path::PathBuf;
 use thiserror::Error;
 
@@ -33,6 +35,9 @@ pub enum SaccadeError {
 
     #[error("Regex error: {0}")]
     Regex(#[from] regex::Error),
+
+    #[error("Mutex lock failed: a thread panicked while holding the lock")]
+    MutexPoisoned,
 
     #[error("Generic error: {0}")]
     Other(String),

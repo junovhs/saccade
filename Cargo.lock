@@ -494,6 +494,7 @@ dependencies = [
  "dunce",
  "glob",
  "ignore",
+ "once_cell",
  "rayon",
  "regex",
  "serde",
