@@ -13,7 +13,7 @@ pub mod stage0;
 pub mod stage1;
 pub mod stage2;
 
-use config::{Config, GitMode};
+use config::Config; // <--- MODIFIED: Removed unused 'GitMode'
 use enumerate::FileEnumerator;
 use error::{Result, SaccadeError};
 use filter::FileFilter;
@@ -25,7 +25,7 @@ use stage1::Stage1Generator;
 use stage2::Stage2Generator;
 
 use std::fs;
-use std::path::PathBuf; // <--- MODIFIED: Removed 'Path'
+use std::path::PathBuf;
 use std::process::Command;
 
 pub(crate) const PACK_FILE_NAME: &str = "PACK.txt";
@@ -58,8 +58,16 @@ impl SaccadePack {
 
         self.prepare_output_directory()?;
         let pack_content = self.generate_pack_content(raw_count, &filtered_files, &rust_crates, &frontend_dirs)?;
-        self.write_pack_files(&pack_content, &filtered_files)?;
-        self.print_summary(&filtered_files, !pack_content.deps.is_empty())?;
+        self.write_pack_file(&pack_content, &filtered_files)?;
+
+        // --- MODIFIED: Handle Stage 2 failure immediately and loudly ---
+        let stage2_result = self.generate_stage2(&filtered_files);
+        if let Err(e) = &stage2_result {
+            eprintln!("    WARN: Internal parser failed: {}", e);
+        }
+        // --- End Modification ---
+
+        self.print_summary(&filtered_files, !pack_content.deps.is_empty(), &stage2_result)?;
         Ok(())
     }
 
@@ -100,7 +108,7 @@ impl SaccadePack {
         })
     }
 
-    fn write_pack_files(&self, content: &PackContent, filtered_files: &[PathBuf]) -> Result<()> {
+    fn write_pack_file(&self, content: &PackContent, _filtered_files: &[PathBuf]) -> Result<()> {
         let mut combined = format!("=======PROJECT=======\n{}\n=======END-OF-PROJECT=======\n\n", content.project);
         combined.push_str(&format!("=======STRUCTURE=======\n{}\n=======END-OF-STRUCTURE=======\n\n", content.structure));
         combined.push_str(&format!("=======APIS=======\n{}\n=======END-OF-APIS=======\n\n", content.apis));
@@ -109,42 +117,49 @@ impl SaccadePack {
         }
         combined.push_str(&format!("=======GUIDE=======\n{}\n=======END-OF-GUIDE=======\n", content.guide));
         let pack_path = self.config.pack_dir.join(PACK_FILE_NAME);
-        fs::write(&pack_path, combined).map_err(|e| SaccadeError::Io { source: e, path: pack_path })?;
-
-        eprintln!("🔧  [Stage 2] Generating compressed skeleton with internal parser…");
-        let stage2_path = self.config.pack_dir.join("PACK_STAGE2_COMPRESSED.xml");
-        match Stage2Generator::new().with_verbose(self.config.verbose).generate(filtered_files, &stage2_path) {
-            Ok(Some(msg)) => eprintln!("    {}", msg),
-            Ok(None) => eprintln!("    Internal parser returned no message."),
-            Err(e) => eprintln!("    WARN: Internal parser failed: {}", e),
-        }
-        Ok(())
+        fs::write(&pack_path, combined).map_err(|e| SaccadeError::Io { source: e, path: pack_path })
     }
 
-    fn print_summary(&self, filtered_files: &[PathBuf], has_deps: bool) -> Result<()> {
+    fn generate_stage2(&self, filtered_files: &[PathBuf]) -> Result<Option<String>> {
+        eprintln!("🔧  [Stage 2] Generating compressed skeleton with internal parser…");
+        let stage2_path = self.config.pack_dir.join("PACK_STAGE2_COMPRESSED.xml");
+        Stage2Generator::new().with_verbose(self.config.verbose).generate(filtered_files, &stage2_path)
+    }
+
+    fn print_summary(&self, filtered_files: &[PathBuf], has_deps: bool, stage2_result: &Result<Option<String>>) -> Result<()> {
         let total_bytes: u64 = filtered_files.iter().filter_map(|p| fs::metadata(p).ok().map(|m| m.len())).sum();
         eprintln!("\n📊 Pack Summary\n────────────────────────────────");
         eprintln!("  Output File : {}", self.config.pack_dir.join(PACK_FILE_NAME).display());
         eprintln!("  Files Kept  : {} files", filtered_files.len());
         eprintln!("  Size (est.) : {} bytes  (~{} tokens)", total_bytes, (total_bytes as f64 / 3.5) as u64);
         eprintln!("  Security    : ✔ Secrets & obvious binaries filtered");
-        eprintln!("  Stage-2 XML : {}", self.config.pack_dir.join("PACK_STAGE2_COMPRESSED.xml").display());
+
+        match stage2_result {
+            Ok(_) => eprintln!("  Stage-2 XML : {}", self.config.pack_dir.join("PACK_STAGE2_COMPRESSED.xml").display()),
+            Err(e) => eprintln!("  Stage-2 XML : FAILED ({})", e),
+        }
         eprintln!("────────────────────────────────\n");
-        GuideGenerator::new().print_guide(&self.config.pack_dir, has_deps)
+
+        if stage2_result.is_ok() {
+            GuideGenerator::new().print_guide(&self.config.pack_dir, has_deps)?;
+        } else {
+            eprintln!("🟡 Partial Success. PACK.txt was generated, but Stage-2 skeletonization failed.");
+            eprintln!("   The `WARN` message above contains the specific error.");
+            eprintln!("   In: {}\n", dunce::canonicalize(&self.config.pack_dir)?.display());
+        }
+        Ok(())
     }
 
     fn print_dry_run_stats(&self, filtered_count: usize, rust_crates: &[PathBuf], frontend_dirs: &[PathBuf]) -> Result<()> {
         eprintln!("==> [Dry Run] Would generate the following artifacts:");
         eprintln!("  - {} files would be processed", filtered_count);
         eprintln!("  - Output directory: {}", self.config.pack_dir.display());
-        let git_msg = if is_in_git_repo() { " (auto-detected)" } else { " (no git repo)" };
-        match self.config.git_mode {
-            GitMode::Yes => eprintln!("  - Using Git file enumeration (forced)"),
-            GitMode::No => eprintln!("  - Using find-based file enumeration (forced)"),
-            GitMode::Auto => eprintln!("  - Using {} file enumeration{}", if is_in_git_repo() { "Git" } else { "find-based" }, git_msg),
-        }
+        
+        // --- MODIFIED: Use the variables to prevent warnings ---
         eprintln!("  - Found {} Rust crate(s)", rust_crates.len());
         eprintln!("  - Found {} frontend dir(s)", frontend_dirs.len());
+        // --- End Modification ---
+
         eprintln!("  - Would produce: ai-pack/{} (single file) + PACK_STAGE2_COMPRESSED.xml", PACK_FILE_NAME);
         Ok(())
     }

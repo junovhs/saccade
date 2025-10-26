@@ -7,6 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::panic;
 
 // Configuration constants
 const MAX_FILE_SIZE_FOR_PARSING: u64 = 5 * 1024 * 1024; // 5 MB
@@ -16,32 +17,37 @@ pub struct Stage2Generator {
     verbose: bool,
 }
 
-/// A successful parsing result containing the path and skeletonized content.
 type ParseResult = (PathBuf, String);
 
 impl Stage2Generator {
-    pub fn new() -> Self {
-        Self { verbose: false }
-    }
+    pub fn new() -> Self { Self { verbose: false } }
 
     pub fn with_verbose(mut self, verbose: bool) -> Self {
         self.verbose = verbose;
         self
     }
 
-    /// Generate compressed skeleton using parallel processing.
-    pub fn generate(
-        &self,
-        files_to_process: &[PathBuf],
-        output_path: &Path,
-    ) -> Result<Option<String>> {
+    /// Generate compressed skeleton, now with a panic boundary.
+    pub fn generate(&self, files_to_process: &[PathBuf], output_path: &Path) -> Result<Option<String>> {
         if let Some(parent) = output_path.parent() { fs::create_dir_all(parent).ok(); }
         if files_to_process.is_empty() { return Ok(Some("No files to process for Stage 2.".to_string())); }
         if self.verbose { eprintln!("    Stage-2: Processing {} files in parallel...", files_to_process.len()); }
 
-        let (results, stats) = self.process_files_concurrently(files_to_process)?;
-        let processed_count = stats.processed.load(Ordering::Relaxed);
+        // --- Panic Boundary ---
+        // This catches panics from any worker thread and converts them into a Result::Err.
+        // This is the "Build to Survive" mandate in action.
+        let processing_result = panic::catch_unwind(|| {
+            self.process_files_concurrently(files_to_process)
+        });
 
+        let (results, stats) = match processing_result {
+            Ok(Ok(res)) => res, // Success: No panic, and the function returned Ok.
+            Ok(Err(e)) => return Err(e), // No panic, but the function returned a recoverable error.
+            Err(_) => return Err(SaccadeError::MutexPoisoned), // A panic was caught.
+        };
+        // --- End Panic Boundary ---
+
+        let processed_count = stats.processed.load(Ordering::Relaxed);
         if self.verbose {
             eprintln!("    Stage-2: Successfully parsed {} files", processed_count);
             let skipped_large_count = stats.skipped_large.load(Ordering::Relaxed);
@@ -61,13 +67,14 @@ impl Stage2Generator {
         Ok(Some(msg))
     }
 
-    /// Processes a list of files in parallel, returning skeletonized content and stats.
+    /// Processes files in parallel. This function is now panic-safe when called via `generate`.
     fn process_files_concurrently(&self, files_to_process: &[PathBuf]) -> Result<(Vec<ParseResult>, Stage2Stats)> {
         let stats = Stage2Stats::default();
         let results = Mutex::new(Vec::new());
         let total_files = files_to_process.len();
 
         files_to_process.par_iter().for_each(|file_path| {
+            //panic!("Simulating panic"); Keep this line for the test!
             if let Ok(metadata) = fs::metadata(file_path) {
                 if metadata.len() > MAX_FILE_SIZE_FOR_PARSING {
                     stats.skipped_large.fetch_add(1, Ordering::Relaxed);
@@ -92,8 +99,7 @@ impl Stage2Generator {
         let final_results = results.into_inner().map_err(|_| SaccadeError::MutexPoisoned)?;
         Ok((final_results, stats))
     }
-
-    /// Builds the final XML string from a vector of parse results.
+    
     fn build_xml_output(&self, mut results: Vec<ParseResult>) -> String {
         results.sort_by(|a, b| a.0.cmp(&b.0));
         let mut final_output = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<files>\n");
