@@ -16,6 +16,7 @@ pub enum BuildSystemType {
     Python,
     Go,
     CMake,
+    Conan,
 }
 
 impl fmt::Display for BuildSystemType {
@@ -28,10 +29,10 @@ impl fmt::Display for BuildSystemType {
 /// It analyzes file content to confirm build system identity.
 pub struct Detector;
 
-// High-confidence AST query for CMake. This looks for core command invocations.
+// CORRECTED: This query is compatible with tree-sitter-cmake v0.5.0
+// It simply finds all identifiers, which is a fundamental and stable node type.
 const CMAKE_AST_QUERY: &str = r#"
-(unquoted_argument (identifier)) @cmd
-(quoted_argument (string_content)) @cmd
+(identifier) @cmd
 "#;
 
 // Keywords that, when found as commands, confirm a file is a CMake manifest.
@@ -66,9 +67,11 @@ impl Detector {
             if self.is_go(file) {
                 detected.insert(BuildSystemType::Go);
             }
-            // Use expensive AST validation for ambiguous files like CMake.
             if self.is_cmake_validated(file)? {
                 detected.insert(BuildSystemType::CMake);
+            }
+            if self.is_conan(file) {
+                detected.insert(BuildSystemType::Conan);
             }
         }
 
@@ -92,7 +95,7 @@ impl Detector {
         path.ends_with("go.mod")
     }
 
-    /// High-precision structural validation for CMake files using Tree-sitter.
+    /// High-confidence structural validation for CMake files using Tree-sitter.
     fn is_cmake_validated(&self, path: &Path) -> Result<bool> {
         // A fast-path to avoid reading every file. Only check likely candidates.
         let path_str = path.to_string_lossy();
@@ -127,5 +130,13 @@ impl Detector {
         }
 
         Ok(false)
+    }
+
+    /// Simple, filename-based detector for Conan.
+    fn is_conan(&self, path: &Path) -> bool {
+        matches!(
+            path.file_name().and_then(|n| n.to_str()),
+            Some("conanfile.txt" | "conanfile.py")
+        )
     }
 }

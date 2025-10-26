@@ -20,11 +20,15 @@ static EMAIL_RE: Lazy<Regex> =
 static REGISTRY_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"index\.crates\.io-[^\s/\\]+[\\/]").unwrap());
 
-// Query to find `find_package(PackageName ...)` calls in CMake.
 const CMAKE_DEPS_QUERY: &str = r#"
-(command_invocation
-  name: (identifier) @cmd_name
-  arguments: (unquoted_argument) @pkg_name)
+(normal_command) @command
+"#;
+
+// Tree-sitter query to find `requires = "..."` assignments in Python.
+const PYTHON_CONAN_DEPS_QUERY: &str = r#"
+(assignment
+  left: (identifier) @name
+  right: (string) @value)
 "#;
 
 pub struct Stage1Generator;
@@ -152,8 +156,10 @@ impl Stage1Generator {
             sections.push(self.deps_go());
         }
         if detected_systems.contains(&BuildSystemType::CMake) {
-            // New logic to handle CMake dependencies via parsing.
             sections.push(self.deps_cmake(detected_systems)?);
+        }
+        if detected_systems.contains(&BuildSystemType::Conan) {
+            sections.push(self.deps_conan()?);
         }
         // --- End DCA section ---
 
@@ -269,7 +275,7 @@ impl Stage1Generator {
         parts.join("\n")
     }
 
-    /// NEW: Parse CMakeLists.txt for `find_package` dependencies.
+    /// Parse CMakeLists.txt for `find_package` dependencies.
     fn deps_cmake(&self, _detected_systems: &[BuildSystemType]) -> Result<String> {
         let mut parts: Vec<String> = vec!["C++ (CMake)".to_string()];
         let mut found_any = false;
@@ -318,10 +324,97 @@ impl Stage1Generator {
         
         let mut packages = Vec::new();
         for m in matches {
-            let cmd_name = m.captures[0].node.utf8_text(content.as_bytes()).ok()?;
-            if cmd_name.to_lowercase() == "find_package" {
-                let pkg_name = m.captures[1].node.utf8_text(content.as_bytes()).ok()?;
-                packages.push(format!("- {}", pkg_name.trim()));
+            let node = m.captures[0].node;
+            
+            if let Some(name_node) = node.child(0) {
+                if name_node.kind() == "identifier" {
+                    if let Ok(name) = name_node.utf8_text(content.as_bytes()) {
+                        if name.to_lowercase() == "find_package" {
+                            // CORRECTED: The package name is at child index 2.
+                            if let Some(arg_node) = node.child(2) {
+                                 if let Ok(arg_text) = arg_node.utf8_text(content.as_bytes()) {
+                                    packages.push(format!("- {}", arg_text.trim()));
+                                 }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if packages.is_empty() {
+            None
+        } else {
+            Some(packages.join("\n"))
+        }
+    }
+
+    /// REFACTORED: Parse conanfile.py for `requires` dependencies using Tree-sitter.
+    fn deps_conan(&self) -> Result<String> {
+        let mut parts: Vec<String> = vec!["C++ (Conan)".to_string()];
+        let mut found_any = false;
+
+        let conan_files: Vec<_> = walkdir::WalkDir::new(".")
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy() == "conanfile.py")
+            .collect();
+
+        for entry in conan_files {
+            let path = entry.path();
+            if let Ok(content) = fs::read_to_string(path) {
+                if let Some(deps) = self.extract_conan_deps(&content) {
+                    parts.push(format!(
+                        "Dependencies from: {}\n{}",
+                        path.display(),
+                        deps
+                    ));
+                    found_any = true;
+                }
+            }
+        }
+
+        if !found_any {
+            parts.push("(No `requires` dependencies found in Conan files)".to_string());
+        }
+
+        Ok(parts.join("\n"))
+    }
+
+    /// CORRECTED: Helper to extract `requires` from a conanfile.py's content using Tree-sitter.
+    fn extract_conan_deps(&self, content: &str) -> Option<String> {
+        let mut parser = Parser::new();
+        if parser.set_language(&tree_sitter_python::language()).is_err() {
+            return None;
+        }
+        let tree = parser.parse(content, None)?;
+        let query = Query::new(&tree_sitter_python::language(), PYTHON_CONAN_DEPS_QUERY).ok()?;
+        
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let matches = cursor.matches(&query, tree.root_node(), content.as_bytes());
+
+        let mut packages = Vec::new();
+        for m in matches {
+            // Robustly find captures by name, not index.
+            let mut potential_name = "";
+            let mut potential_value = "";
+    
+            for capture in m.captures {
+                let capture_name = &query.capture_names()[capture.index as usize];
+                if *capture_name == "name" {
+                    if let Ok(text) = capture.node.utf8_text(content.as_bytes()) {
+                        potential_name = text;
+                    }
+                } else if *capture_name == "value" {
+                    if let Ok(text) = capture.node.utf8_text(content.as_bytes()) {
+                        potential_value = text;
+                    }
+                }
+            }
+            
+            if potential_name == "requires" {
+                let cleaned_value = potential_value.trim_matches(|c| c == '\'' || c == '"');
+                packages.push(format!("- {}", cleaned_value));
             }
         }
 

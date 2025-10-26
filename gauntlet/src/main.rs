@@ -164,6 +164,8 @@ fn register_tests() -> Vec<(&'static str, TestFn)> {
             test_13_clickable_link_line_present,
         ),
         ("test_14_stage2_optional", test_14_stage2_optional),
+        ("test_15_structure_annotation", test_15_structure_annotation),
+        ("test_16_multi_deps_synthesis", test_16_multi_deps_synthesis),
     ]
 }
 
@@ -664,6 +666,79 @@ fn test_14_stage2_optional(ctx: &TestContext, dir: &Path) -> Result<()> {
 
     // Stage 2 should still exist from the .rs file, and the run should not crash.
     assert_file(&stage2)?;
+
+    Ok(())
+}
+
+fn test_15_structure_annotation(ctx: &TestContext, dir: &Path) -> Result<()> {
+    let cpp_dir = dir.join("cpp/app");
+    fs::create_dir_all(&cpp_dir)?;
+    fs::write(
+        cpp_dir.join("CMakeLists.txt"),
+        "cmake_minimum_required(VERSION 3.10)\nproject(MyApp)\nadd_executable(app main.cpp)",
+    )?;
+    fs::write(cpp_dir.join("main.cpp"), "int main() { return 0; }")?;
+
+    run_saccade(ctx, dir, &["--no-git", "--verbose"])?;
+
+    let pack = dir.join("ai-pack/PACK.txt");
+    assert_file(&pack)?;
+
+    // Assert that the directory tree contains the annotation for the parent dir.
+    assert_contains(&pack, r"^cpp/app\s+<-- \[CMake Project\]$")?;
+
+    Ok(())
+}
+
+fn test_16_multi_deps_synthesis(ctx: &TestContext, dir: &Path) -> Result<()> {
+    // 1. Create CMake project with a dependency
+    let cmake_dir = dir.join("math_lib");
+    fs::create_dir_all(&cmake_dir)?;
+    fs::write(
+        cmake_dir.join("CMakeLists.txt"),
+        "find_package(Boost 1.70.0 REQUIRED)",
+    )?;
+
+    // 2. Create a Conan project with a dependency and other Python code
+    let conan_dir = dir.join("network_app");
+    fs::create_dir_all(&conan_dir)?;
+    let conanfile_content = r#"
+from conan import ConanFile
+
+# A comment that should be ignored by the parser
+class MyNetworkApp(ConanFile):
+    name = "network-app"
+    version = "1.0"
+    
+    # The critical dependency line
+    requires = "zlib/1.2.13"
+"#;
+    fs::write(
+        conan_dir.join("conanfile.py"),
+        conanfile_content,
+    )?;
+
+    // 3. Run Saccade
+    let log = run_saccade(ctx, dir, &["--no-git", "--verbose"])?;
+
+    // 4. Verify that the detector found both systems
+    assert!(
+        log.contains("Detected build systems: [CMake, Conan]") || log.contains("Detected build systems: [Conan, CMake]"),
+        "Detector did not find both CMake and Conan"
+    );
+
+    let pack = dir.join("ai-pack/PACK.txt");
+    assert_file(&pack)?;
+
+    // 5. Verify that the DEPS section contains dependencies from BOTH sources
+    assert_contains(&pack, "=======DEPS=======")?;
+    // Check for CMake dependency
+    assert_contains(&pack, r"- Boost")?;
+    // Check for Conan dependency, parsed by Tree-sitter
+    assert_contains(&pack, r"- zlib/1.2.13")?;
+    // Check for correct headers
+    assert_contains(&pack, r"C\+\+ \(CMake\)")?;
+    assert_contains(&pack, r"C\+\+ \(Conan\)")?;
 
     Ok(())
 }
